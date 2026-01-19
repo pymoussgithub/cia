@@ -1,0 +1,11 @@
+{
+  "school_filters": {
+    "C/CS": true,
+    "Morning": true,
+    "C/CI": true,
+    "Premium/CS": true,
+    "Premium/CI": true,
+    "B": true,
+    "A": true
+  }
+}
