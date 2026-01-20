@@ -23,7 +23,8 @@ class PersonnelManager(ctk.CTkToplevel):
         self.single_name = "animateur" if personnel_type == "animateurs" else "professeur"
         
         # Configuration fenêtre
-        self.title(f"Gestion des {self.display_name.lower()}")
+        week_display = self._format_week_display(self.current_week)
+        self.title(f"Gestion des {self.display_name.lower()} - {week_display}")
         self.geometry("900x650")
         self.minsize(900, 600)
         self.resizable(True, True)
@@ -199,7 +200,7 @@ class PersonnelManager(ctk.CTkToplevel):
 
                             for col_idx in range(1, sheet.max_column + 1):
                                 header_value = str(sheet.cell(row=1, column=col_idx).value or '').lower()
-                                if any(keyword in header_value for keyword in ['intervenant', 'professeur', 'animateur', 'enseignant']):
+                                if any(keyword in header_value for keyword in ['intervenant', 'professeur', 'animateur', 'enseignant', 'Animateur', 'Rôle', 'rôle', 'role']):
                                     intervenant_col = col_idx
                                 elif 'classe' in header_value or 'class' in header_value:
                                     classe_col = col_idx
@@ -295,7 +296,7 @@ class PersonnelManager(ctk.CTkToplevel):
 
             for col_idx in range(1, target_sheet.max_column + 1):
                 header_value = str(target_sheet.cell(row=1, column=col_idx).value or '').lower()
-                if any(keyword in header_value for keyword in ['intervenant', 'professeur', 'animateur', 'enseignant']):
+                if any(keyword in header_value for keyword in ['intervenant', 'professeur', 'animateur', 'enseignant', 'Animateur', 'Rôle', 'rôle', 'role']):
                     intervenant_col = col_idx
                 elif 'classe' in header_value or 'class' in header_value:
                     classe_col = col_idx
@@ -579,6 +580,28 @@ class PersonnelManager(ctk.CTkToplevel):
         self.week_dropdown.configure(values=week_options)
         self.week_dropdown.set(week_options[0])
 
+    def _detect_class_conflicts(self, items):
+        """Détecte les professeurs assignés à des classes partagées"""
+        from collections import defaultdict
+
+        # Dictionnaire classe -> liste des professeurs
+        class_to_professors = defaultdict(list)
+
+        # Remplir le dictionnaire
+        for item in items:
+            nom = item["nom"]
+            classes = item.get("classes", [])
+            for classe in classes:
+                class_to_professors[classe].append(nom)
+
+        # Trouver les professeurs en conflit (assignés à des classes avec plusieurs professeurs)
+        conflicted_professors = set()
+        for professors in class_to_professors.values():
+            if len(professors) > 1:
+                conflicted_professors.update(professors)
+
+        return conflicted_professors
+
     def _refresh_from_file(self):
         """Recharge les données depuis personnel.json puis rafraîchit l'affichage"""
         self._load_data()
@@ -601,6 +624,9 @@ class PersonnelManager(ctk.CTkToplevel):
         # Tri par nom
         items.sort(key=lambda x: x["nom"])
 
+        # Détecter les conflits de classes (professeurs assignés à la même classe)
+        conflicted_professors = self._detect_class_conflicts(items)
+
         # Création de la grille 4 colonnes
         num_columns = 4
         for idx, item in enumerate(items):
@@ -610,13 +636,18 @@ class PersonnelManager(ctk.CTkToplevel):
             nom = item["nom"]
             classes = item.get("classes", [])
 
+            # Déterminer la couleur de la carte (rouge si conflit)
+            is_conflicted = nom in conflicted_professors
+            card_bg_color = "#FEE2E2" if is_conflicted else "white"  # Rouge clair pour les conflits
+            card_border_color = "#F87171" if is_conflicted else "#E5E7EB"  # Bordure rouge pour les conflits
+
             # Conteneur principal (card)
             person_frame = ctk.CTkFrame(
                 self.grid_container,
-                fg_color="white",
+                fg_color=card_bg_color,
                 corner_radius=12,
                 border_width=2,
-                border_color="#E5E7EB"
+                border_color=card_border_color
             )
             person_frame.grid(row=row, column=col, padx=8, pady=8, sticky="nsew")
 
@@ -715,6 +746,9 @@ class PersonnelManager(ctk.CTkToplevel):
             # Rendre toute la card cliquable
             person_frame.bind("<Button-1>", lambda e, n=nom, f=person_frame: self._select_person_frame(n, f))
 
+            # Stocker le nom du professeur dans le frame pour une utilisation ultérieure
+            person_frame.professor_name = nom
+
             # Stocker la référence
             self.item_labels.append(person_frame)
 
@@ -722,9 +756,19 @@ class PersonnelManager(ctk.CTkToplevel):
         """Sélectionne un intervenant et met en surbrillance son frame"""
         self.selected_item = name
 
-        # Réinitialiser tous les frames
+        # Détecter les conflits pour déterminer les couleurs de base
+        items = self.data.get(self.personnel_type, [])
+        conflicted_professors = self._detect_class_conflicts(items)
+
+        # Réinitialiser tous les frames avec leur couleur de base (blanc ou rouge selon conflit)
         for f in self.item_labels:
-            f.configure(fg_color="white", border_color="#E5E7EB")
+            # Le nom du professeur est stocké dans l'attribut 'professor_name' du frame
+            professor_name = getattr(f, 'professor_name', '')
+            is_conflicted = professor_name in conflicted_professors
+            base_bg_color = "#FEE2E2" if is_conflicted else "white"
+            base_border_color = "#F87171" if is_conflicted else "#E5E7EB"
+
+            f.configure(fg_color=base_bg_color, border_color=base_border_color)
 
         # Mettre en surbrillance le frame sélectionné
         frame.configure(fg_color="#EFF6FF", border_color="#3B82F6")
@@ -1096,7 +1140,8 @@ class PersonnelManager(ctk.CTkToplevel):
         # Liste complète des mots à supprimer
         words_to_remove = [
             "animateur", "Animateur", "anim", "Anim",
-            "professeur", "Professeur", "prof", "Prof"
+            "professeur", "Professeur", "prof", "Prof",
+            "Rôle", "rôle", "role", "Role"
         ]
 
         # Nettoyer le nom en supprimant tous les mots-clés d'intervenants

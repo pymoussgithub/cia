@@ -1,0 +1,66 @@
+{
+  "ecole_a": {
+    "total": "08h15 à 11h30",
+    "horaires": [
+      { "de": "08h15", "à": "10h15", "intervenant": "professeur" },
+      { "de": "10h15", "à": "10h30", "type": "pause" },
+      { "de": "10h30", "à": "11h30", "intervenant": "animateur" }
+    ]
+  },
+
+  "ecole_b": {
+    "total": "09h15 à 12h30",
+    "horaires": [
+      { "de": "09h15", "à": "10h15", "intervenant": "animateur" },
+      { "de": "10h15", "à": "10h30", "type": "pause" },
+      { "de": "10h30", "à": "12h30", "intervenant": "professeur" }
+    ]
+  },
+
+  "ECOLE_C_cours_standard": {
+    "total": "8h30 à 11h50",
+    "horaires": [
+      { "de": "08h30", "à": "10h15", "intervenant": "professeur" },
+      { "de": "10h15", "à": "10:30", "type": "pause" },
+      { "de": "10h30", "à": "11h50", "intervenant": "professeur" }     
+    ]
+  },
+
+  "ECOLE_C_cours_intensif": {
+     "total": "11h50 à 12h35",
+     "horaires": [
+      { "de": "11h50", "à": "12h35", "intervenant": "professeur" }
+    ]
+  },
+
+
+  "MORNING": {
+    "total": "09h00 à 12h20",
+    "horaires": [
+      { "de": "09h00", "à": "10h00", "intervenant": "professeur" },
+      { "de": "10h00", "à": "10h10", "type": "pause" },
+      { "de": "10h10", "à": "11h10", "intervenant": "professeur" },
+      { "de": "11h10", "à": "11h20", "type": "pause" },
+      { "de": "11h20", "à": "12h20", "intervenant": "professeur" }
+    ]
+  },
+
+  "ECOLE_PREMIUM_cours_intensifs": {
+    "total": "13h30 à 16h",
+    "horaires": [      
+      { "de": "13h30", "à": "14h45", "intervenant": "professeur" },
+      { "de": "14h45", "à": "15h00", "type": "pause" },
+      { "de": "15h00", "à": "16h00", "intervenant": "professeur" }
+    ]
+  },
+
+  "ECOLE_PREMIUM_cours_standard": {
+    "total": "09h00 à 12h20",
+    "horaires": [
+      { "de": "09h00", "à": "10h30", "intervenant": "professeur" },
+      { "de": "10h30", "à": "10h50", "type": "pause" },
+      { "de": "10h50", "à": "12h20", "intervenant": "professeur" }
+    ]
+  }
+
+}

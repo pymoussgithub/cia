@@ -1,58 +1,9 @@
 import customtkinter as ctk
 import pandas as pd
 import os
-import json
 from tkinter import messagebox
 from openpyxl import load_workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
-
-def load_personnel(week_folder):
-    """Charge les professeurs et animateurs depuis personnel.json"""
-    try:
-        personnel_path = os.path.join(week_folder, "personnel.json")
-        if not os.path.exists(personnel_path): return [], []
-        with open(personnel_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-
-        def extract_names(key):
-            items = data.get(key, [])
-            names = []
-            for i in items:
-                if isinstance(i, str): names.append(i)
-                elif isinstance(i, dict) and 'nom' in i: names.append(i['nom'])
-            return names
-
-        return extract_names('professeurs'), extract_names('animateurs')
-    except: return [], []
-
-def update_personnel_class_assignment(week_folder, intervenant_nom, intervenant_type, classe_nom):
-    """Met à jour le personnel.json pour ajouter une classe à un intervenant"""
-    try:
-        personnel_path = os.path.join(week_folder, "personnel.json")
-        if not os.path.exists(personnel_path): return False
-
-        with open(personnel_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-
-        personnel_type = "professeurs" if intervenant_type == "Professeur" else "animateurs"
-        intervenants = data.get(personnel_type, [])
-        
-        for i, intervenant in enumerate(intervenants):
-            if isinstance(intervenant, dict) and intervenant.get('nom') == intervenant_nom:
-                if 'classes' not in intervenant: intervenant['classes'] = []
-                if classe_nom not in intervenant['classes']:
-                    intervenant['classes'].append(classe_nom)
-                break
-            elif isinstance(intervenant, str) and intervenant == intervenant_nom:
-                intervenants[i] = {"nom": intervenant, "classes": [classe_nom]}
-                break
-
-        with open(personnel_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        return True
-    except Exception as e:
-        print(f"Erreur mise à jour JSON: {e}")
-        return False
 
 def open_add_class_dialog(horaire, school_key, display_name, school_color, week_folder, refresh_callback=None):
     NIVEAUX = ["A0", "A0/A0+", "Pré-A1", "Pré-A1/A1", "A1", "A1.2", "A1.2/A2",
@@ -82,7 +33,6 @@ def open_add_class_dialog(horaire, school_key, display_name, school_color, week_
         "cursor": "hand2"
     }
 
-    professeurs, animateurs = load_personnel(week_folder)
     school_to_file_mapping = {
         'ecole_a': 'ecole_a.xlsx',
         'ecole_b': 'ecole_b.xlsx',
@@ -93,9 +43,20 @@ def open_add_class_dialog(horaire, school_key, display_name, school_color, week_
         'ecole_premium_ci': 'ECOLE_PREMIUM_cours_intensifs.xlsx'
     }
 
+    # Extraire le numéro de semaine du week_folder
+    week_name = os.path.basename(week_folder)
+    if week_name.startswith("semaine_"):
+        try:
+            week_num = week_name.split("_")[1]
+            week_display = f"Semaine {week_num}"
+        except:
+            week_display = week_name
+    else:
+        week_display = week_name
+
     dialog = ctk.CTkToplevel()
-    dialog.title(f"Ajout d'une classe - {display_name}")
-    dialog.geometry("450x520")
+    dialog.title(f"Ajout d'une classe - {display_name} - {week_display}")
+    dialog.geometry("450x350")
     dialog.resizable(False, False)
     dialog.configure(fg_color="white")
     dialog.attributes("-topmost", True)
@@ -114,42 +75,6 @@ def open_add_class_dialog(horaire, school_key, display_name, school_color, week_
     niveau_menu.pack(fill="x", pady=(0, 15))
     niveau_menu.set("Choisir...")
 
-    # --- PERSONNEL ---
-    ctk.CTkLabel(main_frame, text="RESPONSABLE (LAISSER SUR AUCUN SI NON DÉFINI)", font=("Inter", 10, "bold"), text_color="#6B7280").pack(anchor="w", pady=(5, 5))
-    
-    staff_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-    staff_frame.pack(fill="x")
-    staff_frame.grid_columnconfigure((0, 1), weight=1)
-
-    type_label = ctk.CTkLabel(main_frame, text="Aucun responsable sélectionné", font=("Inter", 11, "italic"), text_color="#6B7280")
-    type_label.pack(pady=(6, 0))
-
-    type_intervenant = {"value": ""}
-
-    def update_staff():
-        if prof_menu.get() != "Aucun":
-            anim_menu.set("Aucun")
-            anim_menu.configure(state="disabled")
-            type_label.configure(text="👨‍🏫 Professeur sélectionné", text_color="#2563EB")
-            type_intervenant["value"] = "Professeur"
-        elif anim_menu.get() != "Aucun":
-            prof_menu.set("Aucun")
-            prof_menu.configure(state="disabled")
-            type_label.configure(text="🎨 Animateur sélectionné", text_color="#2563EB")
-            type_intervenant["value"] = "Animateur"
-        else:
-            prof_menu.configure(state="normal")
-            anim_menu.configure(state="normal")
-            type_label.configure(text="Aucun responsable sélectionné", text_color="#6B7280")
-            type_intervenant["value"] = ""
-
-    prof_menu = ctk.CTkOptionMenu(staff_frame, values=["Aucun"] + professeurs, command=lambda _: update_staff(), **OPTION_STYLE)
-    prof_menu.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-    prof_menu.set("Aucun")
-
-    anim_menu = ctk.CTkOptionMenu(staff_frame, values=["Aucun"] + animateurs, command=lambda _: update_staff(), **OPTION_STYLE)
-    anim_menu.grid(row=0, column=1, sticky="ew", padx=(4, 0))
-    anim_menu.set("Aucun")
 
     error_label = ctk.CTkLabel(main_frame, text="", font=("Inter", 11), text_color="#EF4444")
     error_label.pack(pady=10)
@@ -172,19 +97,11 @@ def open_add_class_dialog(horaire, school_key, display_name, school_color, week_
             # Si ça lève une exception, c'est bien une string, on continue
             pass
 
-        # Gestion des valeurs par défaut si non sélectionné
+        # Valeurs par défaut pour l'intervenant
         intervenant_final = "Non spécifié"
         type_final = "Non spécifié"
-        
+
         has_real_intervenant = False
-        if type_intervenant["value"] == "Professeur" and prof_menu.get() != "Aucun":
-            intervenant_final = prof_menu.get()
-            type_final = "Professeur"
-            has_real_intervenant = True
-        elif type_intervenant["value"] == "Animateur" and anim_menu.get() != "Aucun":
-            intervenant_final = anim_menu.get()
-            type_final = "Animateur"
-            has_real_intervenant = True
 
         filename = school_to_file_mapping.get(school_key)
         file_path = os.path.join(week_folder, filename)
@@ -195,7 +112,7 @@ def open_add_class_dialog(horaire, school_key, display_name, school_color, week_
 
             def clean(text):
                 t = str(text).lower()
-                for w in ["professeur", "prof", "animateur", "anim"]:
+                for w in ["professeur", "prof", "animateur", "anim", "Animateur", "Rôle", "rôle", "role"]:
                     t = t.replace(w, "")
                 return t.replace(" ", "").strip()
 
@@ -229,9 +146,6 @@ def open_add_class_dialog(horaire, school_key, display_name, school_color, week_
             wb.save(file_path)
             wb.close()
 
-            # Mise à jour JSON seulement si un vrai nom est sélectionné
-            if has_real_intervenant:
-                update_personnel_class_assignment(week_folder, intervenant_final, type_final, classe_nom)
 
             dialog.destroy()
             messagebox.showinfo("Succès", f"Classe {classe_nom} créée")

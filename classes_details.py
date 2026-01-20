@@ -73,8 +73,23 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
     }
 
     # === INITIALISATION DE LA FENÊTRE ===
+    # Extraire le numéro de semaine du week_folder
+    if week_folder:
+        week_name = os.path.basename(week_folder)
+        if week_name.startswith("semaine_"):
+            try:
+                week_num = week_name.split("_")[1]
+                week_display = f"Semaine {week_num}"
+            except:
+                week_display = week_name
+        else:
+            week_display = week_name
+        window_title = f"Fiche Classe - {week_display}"
+    else:
+        window_title = "Fiche Classe"
+
     detail_window = ctk.CTkToplevel()
-    detail_window.title("Fiche Classe")
+    detail_window.title(window_title)
     detail_window.geometry("1250x820")
     detail_window.configure(fg_color="white") # Fond de la fenêtre BLANC
 
@@ -110,6 +125,12 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
 
             # Mettre à jour le fichier Excel de l'école
             update_school_excel_file_class_name(week_folder, school_name, horaire, ancien_nom, nouveau_nom)
+
+            # Mettre à jour personnel.json
+            update_personnel_json_class_name(week_folder, ancien_nom, nouveau_nom)
+
+            # Afficher un message de confirmation
+            messagebox.showinfo("Modification réussie", f"Le nom de la classe a été changé de '{ancien_nom}' à '{nouveau_nom}' et personnel.json a été mis à jour.")
 
             # Rafraîchir le dashboard
             refresh_main_dashboard(week_folder)
@@ -149,8 +170,32 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
             # Mettre à jour personnel.json
             update_personnel_json(week_folder, ancien_intervenant, intervenant_clean, classe_info['nom_classe'])
 
+            # Mettre à jour matrix.xlsx pour tous les élèves de cette classe
+            update_matrix_professor_for_class_students(week_folder, school_name, horaire, classe_info['nom_classe'], intervenant_clean)
+
             # Rafraîchir le dashboard
             refresh_main_dashboard(week_folder)
+
+    def on_animateur_selected(selected_animateur):
+        """Gère la sélection d'un animateur dans le dropdown."""
+        if selected_animateur and selected_animateur != "Non Spécifié":
+            # Extraire le nom sans l'emoji si nécessaire
+            if selected_animateur.startswith("🎭 "):
+                animateur_clean = selected_animateur.replace("🎭 ", "")
+            else:
+                animateur_clean = selected_animateur
+
+            # Mettre à jour le fichier Excel de l'école pour l'animateur
+            update_school_excel_file_animateur(week_folder, school_name, horaire, classe_info['nom_classe'], animateur_clean)
+
+            # Mettre à jour personnel.json pour l'animateur
+            update_personnel_json_animateur(week_folder, animateur_clean, classe_info['nom_classe'])
+
+            # Rafraîchir le dashboard
+            refresh_main_dashboard(week_folder)
+
+            # Remettre le dropdown à afficher le nouvel animateur
+            # Note: Le dropdown sera mis à jour lors du rafraîchissement de la fenêtre
 
     def select_student(student_index, card):
         """Sélectionne ou désélectionne un élève"""
@@ -174,6 +219,81 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
                 make_children_selectable(child)
 
         make_children_selectable(card)
+
+    def get_current_animateur_from_excel(week_folder, school_name, horaire, classe_nom):
+        """Récupère l'animateur actuel assigné à une classe spécifique depuis le fichier Excel de l'école."""
+        if load_workbook is None or not week_folder:
+            return "Non Spécifié"
+
+        # Mapping des écoles vers les fichiers Excel
+        school_file_mapping = {
+            'A': 'ecole_a.xlsx',
+            'B': 'ecole_b.xlsx',
+            'C/CS': 'ECOLE_C_cours_standard.xlsx',
+            'C/CI': 'ECOLE_C_cours_intensif.xlsx',
+            'Morning': 'MORNING.xlsx',
+            'Premium/CS': 'ECOLE_PREMIUM_cours_standard.xlsx',
+            'Premium/CI': 'ECOLE_PREMIUM_cours_intensifs.xlsx'
+        }
+
+        if school_name not in school_file_mapping:
+            return "Non Spécifié"
+
+        excel_filename = school_file_mapping[school_name]
+        excel_path = os.path.join(week_folder, excel_filename)
+
+        if not os.path.exists(excel_path):
+            return "Non Spécifié"
+
+        try:
+            wb = load_workbook(excel_path)
+
+            # Chercher la feuille correspondant à l'horaire
+            target_sheet = None
+            for sheet_name in wb.sheetnames:
+                sheet_normalized = clean_horaire_name(sheet_name).lower().strip()
+                horaire_normalized = horaire.lower().strip()
+                if sheet_normalized == horaire_normalized or horaire_normalized in sheet_normalized:
+                    target_sheet = wb[sheet_name]
+                    break
+
+            if not target_sheet:
+                return "Non Spécifié"
+
+            # Chercher la ligne de la classe
+            classe_row = None
+            for row_idx in range(2, target_sheet.max_row + 1):
+                if str(target_sheet.cell(row=row_idx, column=1).value or '').strip() == classe_nom:
+                    classe_row = row_idx
+                    break
+
+            if not classe_row:
+                return "Non Spécifié"
+
+            # Chercher la colonne animateur
+            animateur_col = None
+            for col_idx in range(1, target_sheet.max_column + 1):
+                header_value = str(target_sheet.cell(row=1, column=col_idx).value or '').lower()
+                # Chercher spécifiquement "animateur", "anim", "Animateur" ou "Rôle" mais pas "intervenant" ou "prof"
+                if (('animateur' in header_value or 'anim' in header_value or 'Animateur' in header_value or 'rôle' in header_value or 'role' in header_value) and
+                    'intervenant' not in header_value and 'prof' not in header_value):
+                    animateur_col = col_idx
+                    break
+
+            # Si pas trouvé, utiliser la colonne 4 par défaut (comme dans update_school_excel_file_animateur)
+            if animateur_col is None:
+                animateur_col = 4
+
+            # Récupérer l'animateur de la classe
+            animateur_value = str(target_sheet.cell(row=classe_row, column=animateur_col).value or '').strip()
+            if animateur_value and animateur_value not in ['', 'nan', 'none', 'Non spécifié']:
+                return animateur_value
+            else:
+                return "Non Spécifié"
+
+        except Exception as e:
+            print(f"Erreur lors de la récupération de l'animateur de la classe {classe_nom}: {e}")
+            return "Non Spécifié"
 
     def get_students_from_class_excel(week_folder, school_name, horaire, classe_nom):
         """Récupère la liste des élèves d'une classe spécifique depuis le fichier Excel de l'école."""
@@ -483,13 +603,87 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
                     # Essayer de trouver la colonne intervenant (généralement colonne 2 ou 3)
                     for col_idx in [2, 3]:
                         header_value = str(target_sheet.cell(row=1, column=col_idx).value or '').lower()
-                        if 'intervenant' in header_value or 'prof' in header_value or 'animateur' in header_value:
+                        if ('intervenant' in header_value or 'prof' in header_value or 'animateur' in header_value or
+                            'Animateur' in header_value or 'rôle' in header_value or 'role' in header_value):
                             target_sheet.cell(row=row_idx, column=col_idx, value=nouvel_intervenant)
                             wb.save(excel_path)
                             return
 
         except Exception as e:
             print(f"Erreur lors de la mise à jour de l'intervenant dans {excel_filename}: {e}")
+
+    def update_school_excel_file_animateur(week_folder, school_name, horaire, classe_nom, nouvel_animateur):
+        """Met à jour l'animateur d'une classe dans le fichier Excel de l'école."""
+        if load_workbook is None or not week_folder:
+            return
+
+        # Mapping des écoles vers les fichiers Excel
+        school_file_mapping = {
+            'A': 'ecole_a.xlsx',
+            'B': 'ecole_b.xlsx',
+            'C/CS': 'ECOLE_C_cours_standard.xlsx',
+            'C/CI': 'ECOLE_C_cours_intensif.xlsx',
+            'Morning': 'MORNING.xlsx',
+            'Premium/CS': 'ECOLE_PREMIUM_cours_standard.xlsx',
+            'Premium/CI': 'ECOLE_PREMIUM_cours_intensifs.xlsx'
+        }
+
+        if school_name not in school_file_mapping:
+            return
+
+        excel_filename = school_file_mapping[school_name]
+        excel_path = os.path.join(week_folder, excel_filename)
+
+        if not os.path.exists(excel_path):
+            return
+
+        try:
+            wb = load_workbook(excel_path)
+
+            # Chercher la feuille correspondant à l'horaire
+            target_sheet = None
+            for sheet_name in wb.sheetnames:
+                sheet_normalized = clean_horaire_name(sheet_name).lower().strip()
+                horaire_normalized = horaire.lower().strip()
+                if sheet_normalized == horaire_normalized or horaire_normalized in sheet_normalized:
+                    target_sheet = wb[sheet_name]
+                    break
+
+            if not target_sheet:
+                return
+
+            # Chercher la ligne de la classe
+            classe_row = None
+            for row_idx in range(2, target_sheet.max_row + 1):
+                if str(target_sheet.cell(row=row_idx, column=1).value or '').strip() == classe_nom:
+                    classe_row = row_idx
+                    break
+
+            if not classe_row:
+                return
+
+            # Chercher la colonne animateur (différente de la colonne intervenant/professeur)
+            animateur_col = None
+            for col_idx in range(1, target_sheet.max_column + 1):
+                header_value = str(target_sheet.cell(row=1, column=col_idx).value or '').lower()
+                # Chercher spécifiquement "animateur", "anim", "Animateur" ou "Rôle" mais pas "intervenant" ou "prof"
+                if (('animateur' in header_value or 'anim' in header_value or 'Animateur' in header_value or 'rôle' in header_value or 'role' in header_value) and
+                    'intervenant' not in header_value and 'prof' not in header_value):
+                    animateur_col = col_idx
+                    break
+
+            # Si pas trouvé, essayer de trouver une colonne vide ou créer une logique pour la colonne 4
+            if animateur_col is None:
+                # Pour les écoles A et B, on peut utiliser la colonne 4 pour l'animateur
+                animateur_col = 4
+
+            # Mettre à jour la colonne animateur
+            target_sheet.cell(row=classe_row, column=animateur_col, value=nouvel_animateur)
+            wb.save(excel_path)
+            print(f"Animateur '{nouvel_animateur}' assigné à la classe '{classe_nom}' dans {excel_filename}")
+
+        except Exception as e:
+            print(f"Erreur lors de la mise à jour de l'animateur dans {excel_filename}: {e}")
 
     def update_personnel_json(week_folder, ancien_intervenant, nouvel_intervenant, classe_nom):
         """Met à jour personnel.json pour transférer la classe d'un intervenant à un autre."""
@@ -545,6 +739,170 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
         except Exception as e:
             print(f"Erreur lors de la mise à jour de personnel.json: {e}")
 
+    def update_personnel_json_animateur(week_folder, nouvel_animateur, classe_nom):
+        """Met à jour personnel.json pour assigner un animateur à une classe."""
+        if not week_folder:
+            return
+
+        personnel_path = os.path.join(week_folder, "personnel.json")
+
+        if not os.path.exists(personnel_path):
+            return
+
+        try:
+            with open(personnel_path, 'r', encoding='utf-8') as f:
+                personnel_data = json.load(f)
+
+            # Chercher l'animateur dans la liste des animateurs
+            found = False
+            for animateur in personnel_data.get("animateurs", []):
+                if animateur.get("nom") == nouvel_animateur:
+                    if "classes" not in animateur:
+                        animateur["classes"] = []
+                    if classe_nom not in animateur["classes"]:
+                        animateur["classes"].append(classe_nom)
+                    found = True
+                    break
+
+            # Si l'animateur n'existe pas, on pourrait le créer, mais pour l'instant on skip
+            if not found:
+                print(f"Avertissement: Animateur '{nouvel_animateur}' non trouvé dans personnel.json")
+
+            # Sauvegarder les modifications
+            with open(personnel_path, 'w', encoding='utf-8') as f:
+                json.dump(personnel_data, f, indent=4, ensure_ascii=False)
+
+        except Exception as e:
+            print(f"Erreur lors de la mise à jour de personnel.json pour l'animateur: {e}")
+
+    def get_current_selected_week():
+        """Récupère le numéro de la semaine actuellement sélectionnée."""
+        try:
+            # Essayer d'importer la variable globale depuis fenetre_principale
+            import sys
+            main_module = sys.modules.get('fenetre_principale')
+            if main_module and hasattr(main_module, 'selected_week'):
+                week_label = main_module.selected_week.get()  # ex: "Semaine 1"
+                try:
+                    week_num = week_label.split()[-1]  # Extraire "1"
+                    return int(week_num)
+                except (ValueError, IndexError):
+                    return 1  # Valeur par défaut
+            return 1  # Valeur par défaut si pas trouvé
+        except Exception:
+            return 1  # Valeur par défaut en cas d'erreur
+
+    def update_matrix_professor_for_class_students(week_folder, school_name, horaire, classe_nom, nouveau_prof):
+        """
+        Met à jour la colonne "Prof" dans matrix.xlsx pour tous les élèves d'une classe donnée.
+        Utilise la semaine sélectionnée dans l'interface principale.
+        """
+        if not load_workbook:
+            return
+
+        # Étape 1: Récupérer la liste des élèves de cette classe depuis le fichier Excel de l'école
+        eleves_classe = get_students_from_class_excel(week_folder, school_name, horaire, classe_nom)
+
+        if not eleves_classe:
+            print(f"Aucun élève trouvé dans la classe '{classe_nom}'")
+            return
+
+        # Étape 2: Construire le chemin du matrix.xlsx de la semaine sélectionnée
+        week_num = get_current_selected_week()
+        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Remonter d'un niveau depuis classes_details.py
+        matrix_path = os.path.join(script_dir, f"semaine_{week_num}", "matrix.xlsx")
+
+        if not os.path.exists(matrix_path):
+            print(f"Erreur: Le fichier matrix.xlsx de la semaine {week_num} n'existe pas: {matrix_path}")
+            return
+
+        try:
+            wb = load_workbook(matrix_path)
+            ws = wb.active
+
+            # Identifier les colonnes importantes
+            stagiaire_col = None
+            prof_col = None
+
+            for col in range(1, ws.max_column + 1):
+                col_name = str(ws.cell(row=1, column=col).value or '').strip()
+                col_name_lower = col_name.lower()
+
+                if 'stagiaire' in col_name_lower or 'nom' in col_name_lower or 'élève' in col_name_lower or 'eleve' in col_name_lower:
+                    stagiaire_col = col
+                elif 'prof' in col_name_lower and not any(exclure in col_name_lower for exclure in ['cours 1', 'cours 2', 'arrivée', 'départ']):
+                    prof_col = col
+
+            if not stagiaire_col:
+                print("ERREUR: Aucune colonne stagiaire trouvée dans matrix.xlsx")
+                return
+
+            if not prof_col:
+                print("ERREUR: Aucune colonne prof trouvée dans matrix.xlsx")
+                return
+
+            # Normaliser les noms d'élèves à mettre à jour
+            eleves_normalises = {eleve.lower().strip() for eleve in eleves_classe}
+
+            # Parcourir toutes les lignes pour trouver les élèves à mettre à jour
+            updated_count = 0
+
+            for row_idx in range(2, ws.max_row + 1):
+                eleve_nom_brut = str(ws.cell(row=row_idx, column=stagiaire_col).value or '').strip()
+                eleve_nom_normalise = eleve_nom_brut.lower().strip()
+
+                # Chercher une correspondance
+                if any(eleve_nom_normalise in eleve_cible or eleve_cible in eleve_nom_normalise for eleve_cible in eleves_normalises):
+                    # Mettre à jour le professeur
+                    ws.cell(row=row_idx, column=prof_col, value=nouveau_prof)
+                    updated_count += 1
+
+            # Sauvegarder le fichier matrix
+            wb.save(matrix_path)
+
+            if updated_count > 0:
+                print(f"Matrix.xlsx (semaine {week_num}) mis à jour: {updated_count} élève(s) de la classe '{classe_nom}' assigné(s) au prof '{nouveau_prof}'")
+            else:
+                print(f"Aucun élève de la classe '{classe_nom}' trouvé dans matrix.xlsx semaine {week_num}")
+
+        except Exception as e:
+            print(f"Erreur lors de la mise à jour de matrix.xlsx pour les élèves de la classe: {e}")
+
+    def update_personnel_json_class_name(week_folder, ancien_nom_classe, nouveau_nom_classe):
+        """Met à jour personnel.json pour changer le nom d'une classe."""
+        if not week_folder:
+            return
+
+        personnel_path = os.path.join(week_folder, "personnel.json")
+
+        if not os.path.exists(personnel_path):
+            return
+
+        try:
+            with open(personnel_path, 'r', encoding='utf-8') as f:
+                personnel_data = json.load(f)
+
+            # Mettre à jour le nom de classe dans tous les professeurs
+            for intervenant in personnel_data.get("professeurs", []):
+                if "classes" in intervenant:
+                    if ancien_nom_classe in intervenant["classes"]:
+                        intervenant["classes"].remove(ancien_nom_classe)
+                        intervenant["classes"].append(nouveau_nom_classe)
+
+            # Mettre à jour le nom de classe dans tous les animateurs
+            for intervenant in personnel_data.get("animateurs", []):
+                if "classes" in intervenant:
+                    if ancien_nom_classe in intervenant["classes"]:
+                        intervenant["classes"].remove(ancien_nom_classe)
+                        intervenant["classes"].append(nouveau_nom_classe)
+
+            # Sauvegarder les modifications
+            with open(personnel_path, 'w', encoding='utf-8') as f:
+                json.dump(personnel_data, f, indent=4, ensure_ascii=False)
+
+        except Exception as e:
+            print(f"Erreur lors de la mise à jour du nom de classe dans personnel.json: {e}")
+
     def refresh_main_dashboard(week_folder):
         """Rafraîchit le dashboard des classes dans fenetre_principale.py avec un message de chargement."""
         if not week_folder or not refresh_callback:
@@ -566,20 +924,38 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
         # Lancer le rafraîchissement après un court délai
         detail_window.after(100, do_refresh)
 
+    def create_safe_toplevel(width=300, height=120, title="", resizable=False, overrideredirect=False, transient=True):
+        """Crée un CTkToplevel de manière sécurisée en vérifiant si detail_window existe encore."""
+        parent_window = detail_window if detail_window and detail_window.winfo_exists() else None
+        popup = ctk.CTkToplevel(parent_window)
+        popup.title(title)
+        popup.geometry(f"{width}x{height}")
+        popup.resizable(resizable, resizable)
+        popup.attributes("-topmost", True)
+        if overrideredirect:
+            popup.overrideredirect(True)
+        else:
+            popup.focus_force()
+
+        # Centrer sur la fenêtre parente si elle existe, sinon sur l'écran
+        if parent_window and parent_window.winfo_exists():
+            x = parent_window.winfo_rootx() + (parent_window.winfo_width() // 2) - (width // 2)
+            y = parent_window.winfo_rooty() + (parent_window.winfo_height() // 2) - (height // 2)
+            if transient:
+                popup.transient(parent_window)
+        else:
+            # Centrer sur l'écran
+            screen_width = popup.winfo_screenwidth()
+            screen_height = popup.winfo_screenheight()
+            x = (screen_width // 2) - (width // 2)
+            y = (screen_height // 2) - (height // 2)
+        popup.geometry(f"{width}x{height}+{x}+{y}")
+
+        return popup
+
     def show_loading_popup(message):
         """Affiche un popup de chargement."""
-        loading_popup = ctk.CTkToplevel(detail_window)
-        loading_popup.title("")
-        loading_popup.geometry("300x120")
-        loading_popup.resizable(False, False)
-        loading_popup.attributes("-topmost", True)
-        loading_popup.focus_force()
-        loading_popup.overrideredirect(True)
-
-        # Centrer sur la fenêtre de détails
-        x = detail_window.winfo_rootx() + (detail_window.winfo_width() // 2) - 150
-        y = detail_window.winfo_rooty() + (detail_window.winfo_height() // 2) - 60
-        loading_popup.geometry(f"300x120+{x}+{y}")
+        loading_popup = create_safe_toplevel(300, 120, "", False, True)
 
         # Style moderne
         main_frame = ctk.CTkFrame(
@@ -627,7 +1003,8 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
         # Liste complète des mots à supprimer (avec variations)
         words_to_remove = [
             "animateur", "Animateur", "anim", "Anim",
-            "professeur", "Professeur", "prof", "Prof"
+            "professeur", "Professeur", "prof", "Prof",
+            "Rôle", "rôle", "role", "Role"
         ]
 
         # Nettoyer le nom en supprimant tous les mots-clés d'intervenants
@@ -670,32 +1047,39 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
     class_label.pack(side="left")
     class_label_ref = class_label
 
-    # Bouton crayon pour modifier le nom de classe
+   # Design : Badge avec bordure fine
     edit_class_btn = ctk.CTkButton(
         title_frame,
-        text="✏️",
-        width=30,
-        height=30,
-        font=("Segoe UI", 14),
-        fg_color="transparent",
-        hover_color="#f0f0f0",
-        text_color="#0F172A",
+        text="Modifier\nNom",          # Texte + Icône pour plus de clarté
+        width=60,
+        height=45,
+        corner_radius=6,
+        font=("Segoe UI", 11, "bold"),
+        fg_color="white",
+        text_color="#475569",
+        border_color="#E2E8F0",
+        border_width=1,
+        hover_color="#F8FAFC",
         command=edit_class_name
     )
-    edit_class_btn.pack(side="left", padx=(8, 0))
+    edit_class_btn.pack(side="left", padx=(12, 0))
 
     # Badges d'infos à droite
     right_side = ctk.CTkFrame(header_content, fg_color="transparent")
     right_side.pack(side="right")
 
-    # Badge Horaire (non cliquable)
+    '''# Badge Horaire (non cliquable)
     ctk.CTkLabel(right_side, text=f"🕒 {horaire}", font=("Segoe UI", 12, "bold"),
                  fg_color="#F0FDF4", text_color="#166534", corner_radius=8, padx=15, pady=6).pack(side="left", padx=6)
+    '''
 
-    # Dropdown Niveau
+    # Section Niveau
+    niveau_frame = ctk.CTkFrame(right_side, fg_color="transparent")
+    niveau_frame.pack(side="left", padx=6)
+    ctk.CTkLabel(niveau_frame, text="Niveau", font=("Segoe UI", 9, "bold"), text_color="#6B7280").pack(anchor="center", pady=(0, 2))
     niveau_values = [f"🎓 {niv}" for niv in liste_niveaux]
     niveau_dropdown = ctk.CTkOptionMenu(
-        right_side,
+        niveau_frame,
         values=niveau_values,
         command=lambda selected: on_niveau_selected(selected),
         font=("Segoe UI", 11, "bold"),
@@ -710,17 +1094,20 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
         dropdown_text_color="#1E40AF"
     )
     niveau_dropdown.set(f"🎓 {classe_info.get('niveau', 'N/A')}")
-    niveau_dropdown.pack(side="left", padx=6)
+    niveau_dropdown.pack()
     niveau_dropdown_ref = niveau_dropdown
 
-    # Dropdown Intervenant
+    # Section Professeur
+    prof_frame = ctk.CTkFrame(right_side, fg_color="transparent")
+    prof_frame.pack(side="left", padx=6)
+    ctk.CTkLabel(prof_frame, text="Professeur", font=("Segoe UI", 9, "bold"), text_color="#6B7280").pack(anchor="center", pady=(0, 2))
     if type_intervenant == "professeur":
         interv_values = [f"👨‍🏫 {interv}" for interv in liste_intervenants_profs]
     else:
         interv_values = [f"🎭 {interv}" for interv in liste_intervenants_anims]
 
     intervenant_dropdown = ctk.CTkOptionMenu(
-        right_side,
+        prof_frame,
         values=interv_values,
         command=lambda selected: on_intervenant_selected(selected),
         font=("Segoe UI", 11, "bold"),
@@ -735,8 +1122,39 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
         dropdown_text_color="#6B21A8"
     )
     intervenant_dropdown.set(f"{'👨‍🏫' if type_intervenant == 'professeur' else '🎭'} {intervenant}")
-    intervenant_dropdown.pack(side="left", padx=6)
+    intervenant_dropdown.pack()
     intervenant_dropdown_ref = intervenant_dropdown
+
+    # Section Animateur (pour les écoles A et B uniquement)
+    if school_name in ["A", "B"]:
+        anim_frame = ctk.CTkFrame(right_side, fg_color="transparent")
+        anim_frame.pack(side="left", padx=6)
+        ctk.CTkLabel(anim_frame, text="Animateur", font=("Segoe UI", 9, "bold"), text_color="#6B7280").pack(anchor="center", pady=(0, 2))
+
+        # Récupérer l'animateur actuel assigné à la classe
+        current_animateur = get_current_animateur_from_excel(week_folder, school_name, horaire, classe_info['nom_classe'])
+
+        # Dropdown pour assigner un animateur
+        anim_values = ["Non Spécifié"] + [f"🎭 {anim}" for anim in liste_intervenants_anims]
+        anim_dropdown = ctk.CTkOptionMenu(
+            anim_frame,
+            values=anim_values,
+            command=lambda selected: on_animateur_selected(selected),
+            font=("Segoe UI", 10, "bold"),
+            height=32,
+            width=120,
+            fg_color="#A7F3D0",  # Couleur plus douce (vert clair)
+            button_color="#A7F3D0",
+            button_hover_color="#86EFAC",
+            text_color="#065F46",
+            dropdown_fg_color="#F0FDF4",
+            dropdown_hover_color="#DCFCE7",
+            dropdown_text_color="#166534"
+        )
+        # Afficher l'animateur actuel ou "Non Spécifié"
+        display_text = f"🎭 {current_animateur}" if current_animateur != "Non Spécifié" else "Non Spécifié"
+        anim_dropdown.set(display_text)
+        anim_dropdown.pack()
 
     # === 2. FRAME CENTRALE GRISE (Bords arrondis) ===
     # Cette frame contient uniquement la liste des élèves
@@ -874,18 +1292,13 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
         """Supprime les élèves sélectionnés de la classe"""
         if not selected_students:
             # Afficher un message d'erreur si aucun élève n'est sélectionné
-            error_popup = ctk.CTkToplevel(detail_window)
-            error_popup.title("Erreur")
-            error_popup.geometry("350x150")
-            error_popup.resizable(False, False)
-            error_popup.attributes("-topmost", True)
+            error_popup = create_safe_toplevel(350, 150, "Erreur")
             error_popup.lift()
             error_popup.after(50, lambda: [error_popup.focus_force(), error_popup.grab_set()])
 
             # Centrer sur la fenêtre principale
             x = detail_window.winfo_rootx() + (detail_window.winfo_width() // 2) - 175
             y = detail_window.winfo_rooty() + (detail_window.winfo_height() // 2) - 75
-            error_popup.geometry(f"350x150+{x}+{y}")
 
             ctk.CTkLabel(error_popup, text="Aucun élève sélectionné", font=("Segoe UI", 14, "bold")).pack(pady=(20, 10))
             ctk.CTkLabel(error_popup, text="Veuillez sélectionner au moins un élève.", font=("Segoe UI", 11)).pack(pady=(0, 20))
@@ -894,11 +1307,7 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
             return
 
         # Demander confirmation
-        confirm_popup = ctk.CTkToplevel(detail_window)
-        confirm_popup.title("Confirmation")
-        confirm_popup.geometry("400x180")
-        confirm_popup.resizable(False, False)
-        confirm_popup.attributes("-topmost", True)
+        confirm_popup = create_safe_toplevel(400, 180, "Confirmation")
 
         # Centrer sur la fenêtre principale
         x = detail_window.winfo_rootx() + (detail_window.winfo_width() // 2) - 200
@@ -1171,12 +1580,7 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
     def _create_student_class_assignment_menu():
         """Crée le menu d'assignation de classe pour les élèves."""
         # Créer la fenêtre du menu
-        menu = ctk.CTkToplevel(detail_window)
-        menu.title("")
-        menu.geometry("700x600")
-        menu.resizable(True, True)
-        menu.transient(detail_window)
-        menu.attributes("-topmost", True)
+        menu = create_safe_toplevel(700, 600, "", True, False, True)
         menu.overrideredirect(True)
         menu.configure(fg_color="white")
 
@@ -1912,17 +2316,12 @@ def open_classe_details(classe_info, horaire, intervenant, type_intervenant, sch
         """Affiche les informations détaillées des élèves sélectionnés"""
         if not selected_students:
             # Afficher un message d'erreur si aucun élève n'est sélectionné
-            error_popup = ctk.CTkToplevel(detail_window)
-            error_popup.title("Erreur")
-            error_popup.geometry("350x150")
-            error_popup.resizable(False, False)
-            error_popup.attributes("-topmost", True)
+            error_popup = create_safe_toplevel(350, 150, "Erreur")
             error_popup.lift()
             error_popup.after(50, lambda: [error_popup.focus_force(), error_popup.grab_set()])
 
             x = detail_window.winfo_rootx() + (detail_window.winfo_width() // 2) - 175
             y = detail_window.winfo_rooty() + (detail_window.winfo_height() // 2) - 75
-            error_popup.geometry(f"350x150+{x}+{y}")
 
             ctk.CTkLabel(error_popup, text="Aucun élève sélectionné", font=("Segoe UI", 14, "bold")).pack(pady=(20, 10))
             ctk.CTkLabel(error_popup, text="Veuillez sélectionner au moins un élève.", font=("Segoe UI", 11)).pack(pady=(0, 20))

@@ -35,7 +35,7 @@ class AppPedagogique(ctk.CTk):
                          "#FFF4E0", "#FFF0D1", "#FFEBCC", "#FCE8E8", "#F0E6F2", "#E8DCE8",
                          "#E4F2F0", "#DDE5EA", "#FCE4EC"]
         self.map_colors = dict(zip(self.NIVEAUX, self.COULEURS))
-        self.AGES = {"3-7": (3, 7), "8-11": (8, 11), "11-17": (11, 17)}
+        self.AGES = {"3-7": (3, 7), "8-11": (8, 11), "12-17+": (12, 25)}
 
         # Variables de filtres
         self.filter_levels = {niv: ctk.BooleanVar(value=False) for niv in self.NIVEAUX}
@@ -83,16 +83,22 @@ class AppPedagogique(ctk.CTk):
             sys.exit()
 
         try:
-            self.df = pd.read_excel(self.file_path)
+            self.df = self.safe_read_excel(self.file_path)
             # Normalisation des colonnes
             self.cols_map = {
                 "Ecole": self.find_column(["ecole", "école", "school"]),
-                "Horaire": self.find_column(["horaire", "horaire", "time", "schedule"]),
                 "Classe": self.find_column(["classe", "class", "groupe"]),
                 "Stagiaire": self.find_column(["stagiaire", "nom", "élève"]),
                 "Âge": self.find_column(["âge", "age"]),
-                "Cours 2": self.find_column(["cours 2", "intensif", "ci"]),
-                "Niveau": self.find_column(["niveau"])
+                "Cours 2": self.find_column(["Cours 2"]),
+                "Niveau": self.find_column(["niveau"]),
+                "Classe CI": self.find_column(["classe ci", "classe_ci"]),
+                "Prof": self.find_column(["prof", "professeur", "enseignant"]),
+                "Prof CI": self.find_column(["prof ci", "prof_ci", "professeur ci"]),
+                "Départ": self.find_column(["cours 1 du", "départ", "depart"]),
+                "Arrivée": self.find_column(["cours 1 au", "arrivée", "arrivee"]),
+                "Départ CI": self.find_column(["cours 2 du", "départ ci", "depart ci"]),
+                "Arrivée CI": self.find_column(["cours 2 au", "arrivée ci", "arrivee ci"])
             }
             if not self.cols_map["Stagiaire"]:
                 raise ValueError("Impossible de trouver la colonne 'Stagiaire'.")
@@ -101,13 +107,37 @@ class AppPedagogique(ctk.CTk):
                 self.df["Niveau"] = None
                 self.cols_map["Niveau"] = "Niveau"
 
-            if not self.cols_map["Horaire"]:
-                self.df["Horaire"] = None
-                self.cols_map["Horaire"] = "Horaire"
-
             if not self.cols_map["Cours 2"]:
                 self.df["Cours 2"] = None
                 self.cols_map["Cours 2"] = "Cours 2"
+
+            if not self.cols_map["Classe CI"]:
+                self.df["Classe CI"] = None
+                self.cols_map["Classe CI"] = "Classe CI"
+
+            if not self.cols_map["Prof"]:
+                self.df["Prof"] = None
+                self.cols_map["Prof"] = "Prof"
+
+            if not self.cols_map["Prof CI"]:
+                self.df["Prof CI"] = None
+                self.cols_map["Prof CI"] = "Prof CI"
+
+            if not self.cols_map["Départ"]:
+                self.df["Départ"] = None
+                self.cols_map["Départ"] = "Départ"
+
+            if not self.cols_map["Arrivée"]:
+                self.df["Arrivée"] = None
+                self.cols_map["Arrivée"] = "Arrivée"
+
+            if not self.cols_map["Départ CI"]:
+                self.df["Départ CI"] = None
+                self.cols_map["Départ CI"] = "Départ CI"
+
+            if not self.cols_map["Arrivée CI"]:
+                self.df["Arrivée CI"] = None
+                self.cols_map["Arrivée CI"] = "Arrivée CI"
         except Exception as e:
             error_msg = f"Erreur lors de l'ouverture du fichier :\n{e}"
             print(f"ERREUR: {error_msg}")
@@ -118,6 +148,82 @@ class AppPedagogique(ctk.CTk):
         for col in self.df.columns:
             if any(k in str(col).lower() for k in keywords): return col
         return None
+
+    def safe_read_excel(self, file_path, sheet_name=None):
+        """Lit un fichier Excel de manière sécurisée avec gestion d'erreur."""
+        try:
+            if sheet_name:
+                return pd.read_excel(file_path, sheet_name=sheet_name)
+            else:
+                return pd.read_excel(file_path)
+        except Exception as e:
+            error_msg = f"Erreur lors de la lecture du fichier Excel {file_path}: {str(e)}"
+            print(f"❌ {error_msg}")
+            # Essayer de libérer le fichier si c'est un problème de verrouillage
+            import gc
+            gc.collect()
+            raise Exception(error_msg)
+
+    def safe_load_workbook(self, file_path):
+        """Charge un workbook Excel de manière sécurisée."""
+        if load_workbook is None:
+            raise Exception("openpyxl n'est pas disponible")
+
+        try:
+            return load_workbook(file_path)
+        except Exception as e:
+            error_msg = f"Erreur lors du chargement du workbook {file_path}: {str(e)}"
+            print(f"❌ {error_msg}")
+            raise Exception(error_msg)
+
+    def format_date_jour_mois(self, date_str):
+        """Formate une date pour afficher seulement le jour et le mois (JJ/MM)."""
+        if not date_str or pd.isna(date_str) or str(date_str).strip() == "":
+            return ""
+
+        try:
+            # Convertir en string et nettoyer
+            date_clean = str(date_str).strip()
+
+            # Si c'est déjà au format JJ/MM, le retourner tel quel
+            if len(date_clean) == 5 and date_clean[2] == '/':
+                return date_clean
+
+            # Essayer de parser différentes formes de dates
+            from datetime import datetime
+            import re
+
+            # Chercher un pattern JJ/MM/YYYY ou JJ/MM/YYYY HH:MM:SS
+            match = re.search(r'(\d{1,2})/(\d{1,2})(?:/\d{4})?(?:\s+\d{1,2}:\d{1,2}(?::\d{1,2})?)?', date_clean)
+            if match:
+                jour = match.group(1).zfill(2)
+                mois = match.group(2).zfill(2)
+                return f"{jour}/{mois}"
+
+            # Essayer de parser avec datetime
+            # Essayer différents formats courants
+            formats_to_try = [
+                '%d/%m/%Y %H:%M:%S',
+                '%d/%m/%Y %H:%M',
+                '%d/%m/%Y',
+                '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%d',
+                '%m/%d/%Y %H:%M:%S',
+                '%m/%d/%Y'
+            ]
+
+            for fmt in formats_to_try:
+                try:
+                    parsed_date = datetime.strptime(date_clean, fmt)
+                    return parsed_date.strftime('%d/%m')
+                except ValueError:
+                    continue
+
+            # Si rien ne marche, retourner la valeur originale nettoyée
+            return date_clean
+
+        except Exception:
+            return str(date_str).strip()
 
     def get_available_weeks(self):
         """Génère la liste des semaines disponibles pour l'import."""
@@ -276,7 +382,7 @@ class AppPedagogique(ctk.CTk):
 
         try:
             # Lire le fichier source
-            df_source = pd.read_excel(source_path)
+            df_source = self.safe_read_excel(source_path)
 
             # Créer un mapping complet des assignations par nom d'élève
             source_cols = self.find_columns_for_df(df_source)
@@ -345,12 +451,12 @@ class AppPedagogique(ctk.CTk):
                             self.df.at[idx, self.cols_map["Ecole"]] = student_data["ecole"]
                             imported_info["donnees"].append(f"École: {student_data['ecole']}")
 
-                    # Importer l'horaire si la colonne existe et que l'élève n'a pas déjà un horaire
-                    if "horaire" in student_data and self.cols_map["Horaire"]:
-                        current_horaire = row[self.cols_map["Horaire"]]
-                        if pd.isna(current_horaire) or current_horaire == "" or str(current_horaire).strip() == "":
-                            self.df.at[idx, self.cols_map["Horaire"]] = student_data["horaire"]
-                            imported_info["donnees"].append(f"Horaire: {student_data['horaire']}")
+                    # Import de l'horaire désactivé (colonne supprimée)
+                    # if "horaire" in student_data and self.cols_map["Horaire"]:
+                    #     current_horaire = row[self.cols_map["Horaire"]]
+                    #     if pd.isna(current_horaire) or current_horaire == "" or str(current_horaire).strip() == "":
+                    #         self.df.at[idx, self.cols_map["Horaire"]] = student_data["horaire"]
+                    #         imported_info["donnees"].append(f"Horaire: {student_data['horaire']}")
 
                     # Importer la classe si la colonne existe et que l'élève n'a pas déjà une classe
                     if "classe" in student_data and self.cols_map["Classe"]:
@@ -369,9 +475,10 @@ class AppPedagogique(ctk.CTk):
             self.df.to_excel(self.file_path, index=False)
 
             # Vérifier et créer les classes manquantes dans les fichiers Excel des écoles
-            if imported_data:
-                print("Vérification et création des classes manquantes...")
-                self.create_missing_classes_from_import(imported_data)
+            # Désactivé car la colonne Horaire a été supprimée
+            # if imported_data:
+            #     print("Vérification et création des classes manquantes...")
+            #     self.create_missing_classes_from_import(imported_data)
 
             # Rafraîchir l'affichage
             self.refresh_table(preserve_selection=False)
@@ -419,7 +526,7 @@ class AppPedagogique(ctk.CTk):
             student_row = self.df[self.df[self.cols_map["Stagiaire"]] == nom]
             if not student_row.empty:
                 ecole = student_row[self.cols_map["Ecole"]].values[0] if self.cols_map["Ecole"] and pd.notna(student_row[self.cols_map["Ecole"]].values[0]) else None
-                horaire = student_row[self.cols_map["Horaire"]].values[0] if self.cols_map["Horaire"] and pd.notna(student_row[self.cols_map["Horaire"]].values[0]) else None
+                # horaire = student_row[self.cols_map["Horaire"]].values[0] if self.cols_map["Horaire"] and pd.notna(student_row[self.cols_map["Horaire"]].values[0]) else None  # Désactivé
                 classe = student_row[self.cols_map["Classe"]].values[0] if self.cols_map["Classe"] and pd.notna(student_row[self.cols_map["Classe"]].values[0]) else None
                 niveau = student_row[self.cols_map["Niveau"]].values[0] if self.cols_map["Niveau"] and pd.notna(student_row[self.cols_map["Niveau"]].values[0]) else None
 
@@ -469,7 +576,7 @@ class AppPedagogique(ctk.CTk):
                 continue
 
             try:
-                wb = load_workbook(excel_path)
+                wb = self.safe_load_workbook(excel_path)
                 sheet_modified = False
 
                 for horaire, classes in horaires.items():
@@ -638,7 +745,7 @@ class AppPedagogique(ctk.CTk):
         cols_map["Stagiaire"] = self.find_column_in_df(df, ["stagiaire", "nom", "name", "élève"])
         cols_map["Niveau"] = self.find_column_in_df(df, ["niveau", "level", "niveau actuel"])
         cols_map["Ecole"] = self.find_column_in_df(df, ["ecole", "école", "school"])
-        cols_map["Horaire"] = self.find_column_in_df(df, ["horaire", "horaire", "time", "schedule"])
+        # cols_map["Horaire"] = self.find_column_in_df(df, ["horaire", "horaire", "time", "schedule"])  # Désactivé
         cols_map["Classe"] = self.find_column_in_df(df, ["classe", "class", "groupe"])
         return cols_map
 
@@ -667,7 +774,8 @@ class AppPedagogique(ctk.CTk):
         # Liste complète des mots à supprimer (avec variations)
         words_to_remove = [
             "animateur", "Animateur", "anim", "Anim",
-            "professeur", "Professeur", "prof", "Prof"
+            "professeur", "Professeur", "prof", "Prof",
+            "Rôle", "rôle", "role", "Role"
         ]
 
         # Nettoyer le nom en supprimant tous les mots-clés d'intervenants
@@ -690,7 +798,7 @@ class AppPedagogique(ctk.CTk):
 
     def create_widgets(self):
         # --- COLONNE GAUCHE (FILTRES & STATS) ---
-        self.sidebar_left = ctk.CTkFrame(self, width=300, corner_radius=0, fg_color="#f8f9fa")
+        self.sidebar_left = ctk.CTkFrame(self, width=250, corner_radius=0, fg_color="#f8f9fa")
         self.sidebar_left.pack(side="left", fill="y")
 
         # En-tête avec titre et bouton reset
@@ -1002,17 +1110,24 @@ class AppPedagogique(ctk.CTk):
         )
         self.scrollbar.pack(side="right", fill="y")
         
-        self.tree = ttk.Treeview(self.table_frame, columns=("Nom", "Niveau", "Age", "CI", "Ecole", "Horaire", "Classe"),
+        self.tree = ttk.Treeview(self.table_frame, columns=("Stagiaire", "Niveau", "Age", "Classe", "Prof", "Arrivée", "Départ", "sep", "CI", "Classe CI", "Prof CI", "Arr. CI", "Dép. CI"),
                                  show="headings", style="Treeview", yscrollcommand=self.scrollbar.set)
         self.scrollbar.configure(command=self.tree.yview)
-        
-        for col in [("Nom", 300), ("Niveau", 150), ("Age", 80), ("CI", 100), ("Ecole", 120), ("Horaire", 150), ("Classe", 100)]:
-            self.tree.heading(col[0], text=col[0])
-            self.tree.column(col[0], width=col[1], anchor="center" if col[0] != "Nom" else "w")
+
+        for col in [("Stagiaire", 150), ("Niveau", 80), ("Age", 40), ("Classe", 70), ("Prof", 70), ("Arrivée", 60), ("Départ", 60), ("sep", 10), ("CI", 30), ("Classe CI", 70), ("Prof CI", 70), ("Arr. CI", 60), ("Dép. CI", 60)]:
+            if col[0] == "sep":
+                self.tree.heading(col[0], text="")
+                self.tree.column(col[0], width=col[1], anchor="center", stretch=False)
+            else:
+                self.tree.heading(col[0], text=col[0])
+                self.tree.column(col[0], width=col[1], anchor="center" if col[0] != "Stagiaire" else "w")
         self.tree.pack(side="left", fill="both", expand=True)
 
         for niv, color in self.map_colors.items():
             self.tree.tag_configure(niv, background=color)
+
+        # Style pour le séparateur vertical
+        self.style.configure("Separator.Treeview", background="#d1d5db", relief="solid")
 
         # Binding pour mettre à jour les compteurs quand la sélection change
         self.tree.bind('<<TreeviewSelect>>', lambda e: self.update_counters())
@@ -1648,13 +1763,19 @@ class AppPedagogique(ctk.CTk):
         df_sorted = self.df.sort_values(by=self.cols_map["Stagiaire"])
 
         for _, row in df_sorted.iterrows():
-            ecole = str(row[self.cols_map["Ecole"]]) if self.cols_map["Ecole"] and pd.notna(row[self.cols_map["Ecole"]]) else ""
-            horaire = str(row[self.cols_map["Horaire"]]) if self.cols_map["Horaire"] and pd.notna(row[self.cols_map["Horaire"]]) else ""
             classe = str(row[self.cols_map["Classe"]]) if self.cols_map["Classe"] and pd.notna(row[self.cols_map["Classe"]]) else ""
+            prof = str(row[self.cols_map["Prof"]]) if self.cols_map["Prof"] and pd.notna(row[self.cols_map["Prof"]]) else ""
+            arrivee = self.format_date_jour_mois(row[self.cols_map["Arrivée"]]) if self.cols_map["Arrivée"] and pd.notna(row[self.cols_map["Arrivée"]]) else ""
+            depart = self.format_date_jour_mois(row[self.cols_map["Départ"]]) if self.cols_map["Départ"] and pd.notna(row[self.cols_map["Départ"]]) else ""
+            # Nouvelle logique : CI = "OUI" si "Cours 2 Du" n'est pas vide
+            ci_val = "OUI" if self.cols_map["Départ CI"] and pd.notna(row[self.cols_map["Départ CI"]]) and str(row[self.cols_map["Départ CI"]]).strip() != "" else ""
+            classe_ci = str(row[self.cols_map["Classe CI"]]) if self.cols_map["Classe CI"] and pd.notna(row[self.cols_map["Classe CI"]]) else ""
+            prof_ci = str(row[self.cols_map["Prof CI"]]) if self.cols_map["Prof CI"] and pd.notna(row[self.cols_map["Prof CI"]]) else ""
+            arrivee_ci = self.format_date_jour_mois(row[self.cols_map["Arrivée CI"]]) if self.cols_map["Arrivée CI"] and pd.notna(row[self.cols_map["Arrivée CI"]]) else ""
+            depart_ci = self.format_date_jour_mois(row[self.cols_map["Départ CI"]]) if self.cols_map["Départ CI"] and pd.notna(row[self.cols_map["Départ CI"]]) else ""
             nom = str(row[self.cols_map["Stagiaire"]])
             niv = str(row[self.cols_map["Niveau"]]) if pd.notna(row[self.cols_map["Niveau"]]) else ""
             age = row[self.cols_map["Âge"]]
-            ci_val = "OUI" if any(x in str(row[self.cols_map["Cours 2"]]).lower() for x in ["intensif", "ci", "oui"]) else ""
 
             # Logique de filtrage
             if search_term not in nom.lower(): continue
@@ -1664,7 +1785,7 @@ class AppPedagogique(ctk.CTk):
             if (ci_avec or ci_sans) and not ((ci_avec and ci_val == "OUI") or (ci_sans and (ci_val == "NON" or ci_val == ""))): continue
             if no_level_filter and niv: continue  # Si filtre "sans niveau" actif, exclure les élèves qui ont un niveau
 
-            self.tree.insert("", "end", values=(nom, niv, age, ci_val, ecole, horaire, classe), tags=(niv,))
+            self.tree.insert("", "end", values=(nom, niv, age, classe, prof, arrivee, depart, "", ci_val, classe_ci, prof_ci, depart_ci, arrivee_ci), tags=(niv,))
 
         self.update_counters()
 
@@ -1732,13 +1853,19 @@ class AppPedagogique(ctk.CTk):
 
         count = 0
         for _, row in df_sorted.iterrows():
-            ecole = str(row[self.cols_map["Ecole"]]) if self.cols_map["Ecole"] and pd.notna(row[self.cols_map["Ecole"]]) else ""
-            horaire = str(row[self.cols_map["Horaire"]]) if self.cols_map["Horaire"] and pd.notna(row[self.cols_map["Horaire"]]) else ""
             classe = str(row[self.cols_map["Classe"]]) if self.cols_map["Classe"] and pd.notna(row[self.cols_map["Classe"]]) else ""
+            prof = str(row[self.cols_map["Prof"]]) if self.cols_map["Prof"] and pd.notna(row[self.cols_map["Prof"]]) else ""
+            arrivee = self.format_date_jour_mois(row[self.cols_map["Arrivée"]]) if self.cols_map["Arrivée"] and pd.notna(row[self.cols_map["Arrivée"]]) else ""
+            depart = self.format_date_jour_mois(row[self.cols_map["Départ"]]) if self.cols_map["Départ"] and pd.notna(row[self.cols_map["Départ"]]) else ""
+            # Nouvelle logique : CI = "OUI" si "Cours 2 Du" n'est pas vide
+            ci_val = "OUI" if self.cols_map["Départ CI"] and pd.notna(row[self.cols_map["Départ CI"]]) and str(row[self.cols_map["Départ CI"]]).strip() != "" else ""
+            classe_ci = str(row[self.cols_map["Classe CI"]]) if self.cols_map["Classe CI"] and pd.notna(row[self.cols_map["Classe CI"]]) else ""
+            prof_ci = str(row[self.cols_map["Prof CI"]]) if self.cols_map["Prof CI"] and pd.notna(row[self.cols_map["Prof CI"]]) else ""
+            arrivee_ci = self.format_date_jour_mois(row[self.cols_map["Arrivée CI"]]) if self.cols_map["Arrivée CI"] and pd.notna(row[self.cols_map["Arrivée CI"]]) else ""
+            depart_ci = self.format_date_jour_mois(row[self.cols_map["Départ CI"]]) if self.cols_map["Départ CI"] and pd.notna(row[self.cols_map["Départ CI"]]) else ""
             nom = str(row[self.cols_map["Stagiaire"]])
             niv = str(row[self.cols_map["Niveau"]]) if pd.notna(row[self.cols_map["Niveau"]]) else ""
             age = row[self.cols_map["Âge"]]
-            ci_val = "OUI" if any(x in str(row[self.cols_map["Cours 2"]]).lower() for x in ["intensif", "ci", "oui"]) else ""
 
             # Appliquer les mêmes filtres que dans refresh_table
             if search_term not in nom.lower(): continue
@@ -1775,16 +1902,23 @@ class AppPedagogique(ctk.CTk):
 
                     # Recharger les données depuis le fichier
                     try:
-                        self.df = pd.read_excel(self.file_path)
+                        self.df = self.safe_read_excel(self.file_path)
                         # Re-normaliser les colonnes au cas où la structure a changé
                         self.cols_map = {
                             "Ecole": self.find_column(["ecole", "école", "school"]),
-                            "Horaire": self.find_column(["horaire", "horaire", "time", "schedule"]),
+                            # "Horaire": self.find_column(["horaire", "horaire", "time", "schedule"]),  # Désactivé
                             "Classe": self.find_column(["classe", "class", "groupe"]),
                             "Stagiaire": self.find_column(["stagiaire", "nom", "élève"]),
                             "Âge": self.find_column(["âge", "age"]),
                             "Cours 2": self.find_column(["cours 2", "intensif", "ci"]),
-                            "Niveau": self.find_column(["niveau"])
+                            "Niveau": self.find_column(["niveau"]),
+                            "Classe CI": self.find_column(["classe ci", "classe_ci"]),
+                            "Prof": self.find_column(["prof", "professeur", "enseignant"]),
+                            "Prof CI": self.find_column(["prof ci", "prof_ci", "professeur ci"]),
+                            "Départ": self.find_column(["cours 1 du", "départ", "depart"]),
+                            "Arrivée": self.find_column(["cours 1 au", "arrivée", "arrivee"]),
+                            "Départ CI": self.find_column(["cours 2 du", "départ ci", "depart ci"]),
+                            "Arrivée CI": self.find_column(["cours 2 au", "arrivée ci", "arrivee ci"])
                         }
                         
                         # Rafraîchir le tableau et les compteurs
@@ -2088,7 +2222,7 @@ class AppPedagogique(ctk.CTk):
 
                 for sheet_name in sheet_names:
                     try:
-                        df = pd.read_excel(excel_path, sheet_name=sheet_name)
+                        df = self.safe_read_excel(excel_path, sheet_name=sheet_name)
 
                         if df.empty:
                             # La feuille est vide mais on garde l'horaire
@@ -2315,6 +2449,77 @@ class AppPedagogique(ctk.CTk):
                     horaire_col = 0
                     horaire_row += 1
 
+    def get_professor_for_class(self, school_key, classe_nom):
+        """Récupère le nom du professeur pour une classe donnée dans une école."""
+        # Mapping pour les fichiers Excel des écoles
+        school_file_mapping = {
+            'ecole_a': 'ecole_a.xlsx',
+            'ecole_b': 'ecole_b.xlsx',
+            'ecole_c_cs': 'ECOLE_C_cours_standard.xlsx',
+            'ecole_c_ci': 'ECOLE_C_cours_intensif.xlsx',
+            'ecole_morning': 'MORNING.xlsx',
+            'ecole_premium_cs': 'ECOLE_PREMIUM_cours_standard.xlsx',
+            'ecole_premium_ci': 'ECOLE_PREMIUM_cours_intensifs.xlsx'
+        }
+
+        excel_filename = school_file_mapping.get(school_key)
+        if not excel_filename:
+            return ""
+
+        week_folder = os.path.dirname(self.file_path)
+        excel_path = os.path.join(week_folder, excel_filename)
+
+        if not os.path.exists(excel_path):
+            return ""
+
+        try:
+            # Lire toutes les feuilles du fichier
+            xl_file = pd.ExcelFile(excel_path)
+            sheet_names = xl_file.sheet_names
+
+            for sheet_name in sheet_names:
+                try:
+                    df_sheet = self.safe_read_excel(excel_path, sheet_name=sheet_name)
+
+                    if df_sheet.empty:
+                        continue
+
+                    # Chercher les colonnes de classes et de professeurs
+                    classe_cols = []
+                    prof_cols = []
+
+                    for col in df_sheet.columns:
+                        col_lower = str(col).lower()
+                        if any(keyword in col_lower for keyword in ['classe', 'groupe', 'section']):
+                            classe_cols.append(col)
+                        if any(keyword in col_lower for keyword in ['prof', 'professeur', 'enseignant', 'intervenant']):
+                            prof_cols.append(col)
+
+                    # Chercher la classe dans cette feuille
+                    for _, row in df_sheet.iterrows():
+                        classe_trouvee = None
+                        for col in classe_cols:
+                            val = str(row.get(col, '')).strip()
+                            if val and val.lower() not in ['', 'nan', 'none'] and val == classe_nom:
+                                classe_trouvee = val
+                                break
+
+                        if classe_trouvee:
+                            # Chercher le professeur dans la même ligne
+                            for col in prof_cols:
+                                prof_val = str(row.get(col, '')).strip()
+                                if prof_val and prof_val.lower() not in ['', 'nan', 'none']:
+                                    return prof_val
+
+                except Exception as e:
+                    print(f"Erreur lors de la lecture de la feuille '{sheet_name}': {e}")
+                    continue
+
+        except Exception as e:
+            print(f"Erreur lors de la lecture du fichier {excel_filename}: {e}")
+
+        return ""
+
     def assign_class_to_student(self, student_names, school_key, horaire_info, classe_info):
         """Assigne l'école, l'horaire et la classe à un ou plusieurs élèves."""
         # Mapping pour convertir les clés d'école en noms d'affichage
@@ -2343,6 +2548,9 @@ class AppPedagogique(ctk.CTk):
         horaire = horaire_info.get('horaire', '')
         classe_nom = classe_info.get('nom_classe', '')
 
+        # Récupérer le professeur de cette classe
+        professor_name = self.get_professor_for_class(school_key, classe_nom)
+
         # S'assurer que student_names est une liste
         if isinstance(student_names, str):
             student_names = [student_names]
@@ -2359,14 +2567,14 @@ class AppPedagogique(ctk.CTk):
                     
                     # Récupérer les anciennes valeurs AVANT de les modifier
                     old_ecole = self.df.loc[mask, self.cols_map["Ecole"]].values[0] if self.cols_map["Ecole"] else None
-                    old_horaire = self.df.loc[mask, self.cols_map["Horaire"]].values[0] if self.cols_map["Horaire"] else None
+                    # old_horaire = self.df.loc[mask, self.cols_map["Horaire"]].values[0] if self.cols_map["Horaire"] else None  # Désactivé
                     old_classe = self.df.loc[mask, self.cols_map["Classe"]].values[0] if self.cols_map["Classe"] else None
-                    
+
                     # Stocker l'ancienne assignation si elle existe
                     if pd.notna(old_ecole) and pd.notna(old_classe) and str(old_ecole).strip() and str(old_classe).strip():
                         old_assignments[student_name] = {
                             'ecole': str(old_ecole).strip(),
-                            'horaire': str(old_horaire).strip() if pd.notna(old_horaire) else '',
+                            # 'horaire': str(old_horaire).strip() if pd.notna(old_horaire) else '',  # Désactivé
                             'classe': str(old_classe).strip()
                         }
 
@@ -2376,22 +2584,30 @@ class AppPedagogique(ctk.CTk):
                         if self.df[col_name].dtype == 'float64':
                             self.df[col_name] = self.df[col_name].astype('object')
                         self.df.loc[mask, col_name] = school_name
-                    if self.cols_map["Horaire"]:
-                        col_name = self.cols_map["Horaire"]
-                        if self.df[col_name].dtype == 'float64':
-                            self.df[col_name] = self.df[col_name].astype('object')
-                        self.df.loc[mask, col_name] = horaire
+                    # if self.cols_map["Horaire"]:  # Désactivé
+                    #     col_name = self.cols_map["Horaire"]
+                    #     if self.df[col_name].dtype == 'float64':
+                    #         self.df[col_name] = self.df[col_name].astype('object')
+                    #     self.df.loc[mask, col_name] = horaire
                     if self.cols_map["Classe"]:
                         col_name = self.cols_map["Classe"]
                         if self.df[col_name].dtype == 'float64':
                             self.df[col_name] = self.df[col_name].astype('object')
                         self.df.loc[mask, col_name] = classe_nom
 
+                    # Mettre à jour le professeur si on l'a trouvé
+                    if self.cols_map["Prof"] and professor_name:
+                        col_name = self.cols_map["Prof"]
+                        if self.df[col_name].dtype == 'float64':
+                            self.df[col_name] = self.df[col_name].astype('object')
+                        self.df.loc[mask, col_name] = professor_name
+
                     assigned_count += 1
 
             # Sauvegarder le fichier matrix
             self.df.to_excel(self.file_path, index=False)
-            print(f"💾 Assignation sauvegardée : {assigned_count} élève(s) assigné(s) à l'école {school_name}, horaire {horaire}, classe {classe_nom}")
+            prof_info = f", prof {professor_name}" if professor_name else ""
+            print(f"💾 Assignation sauvegardée : {assigned_count} élève(s) assigné(s) à l'école {school_name}, classe {classe_nom}{prof_info}")
 
             # Retirer les élèves de leurs anciennes classes (si elles existent)
             if old_assignments:
@@ -2447,22 +2663,22 @@ class AppPedagogique(ctk.CTk):
                     
                     # Récupérer les anciennes valeurs AVANT de les supprimer
                     old_ecole = self.df.loc[mask, self.cols_map["Ecole"]].values[0] if self.cols_map["Ecole"] else None
-                    old_horaire = self.df.loc[mask, self.cols_map["Horaire"]].values[0] if self.cols_map["Horaire"] else None
+                    # old_horaire = self.df.loc[mask, self.cols_map["Horaire"]].values[0] if self.cols_map["Horaire"] else None  # Désactivé
                     old_classe = self.df.loc[mask, self.cols_map["Classe"]].values[0] if self.cols_map["Classe"] else None
-                    
+
                     # Stocker l'ancienne assignation si elle existe
                     if pd.notna(old_ecole) and pd.notna(old_classe) and str(old_ecole).strip() and str(old_classe).strip():
                         old_assignments[student_name] = {
                             'ecole': str(old_ecole).strip(),
-                            'horaire': str(old_horaire).strip() if pd.notna(old_horaire) else '',
+                            # 'horaire': str(old_horaire).strip() if pd.notna(old_horaire) else '',  # Désactivé
                             'classe': str(old_classe).strip()
                         }
 
                     # Supprimer les assignations (mettre à None)
                     if self.cols_map["Ecole"]:
                         self.df.loc[mask, self.cols_map["Ecole"]] = None
-                    if self.cols_map["Horaire"]:
-                        self.df.loc[mask, self.cols_map["Horaire"]] = None
+                    # if self.cols_map["Horaire"]:  # Désactivé
+                    #     self.df.loc[mask, self.cols_map["Horaire"]] = None
                     if self.cols_map["Classe"]:
                         self.df.loc[mask, self.cols_map["Classe"]] = None
 
@@ -2507,24 +2723,23 @@ class AppPedagogique(ctk.CTk):
 
         for student_name, old_data in old_assignments.items():
             old_ecole = old_data['ecole']
-            old_horaire = old_data['horaire']
+            # old_horaire = old_data.get('horaire', '')  # Plus utilisé
             old_classe = old_data['classe']
-            
+
             # Trouver la clé d'école
             school_key = school_name_to_key.get(old_ecole)
             if not school_key:
                 continue
-                
+
             excel_filename = school_file_mapping.get(school_key)
             if not excel_filename:
                 continue
-            
+
             if excel_filename not in files_to_process:
                 files_to_process[excel_filename] = []
-            
+
             files_to_process[excel_filename].append({
                 'student': student_name,
-                'horaire': old_horaire,
                 'classe': old_classe,
                 'school_key': school_key
             })
@@ -2539,64 +2754,52 @@ class AppPedagogique(ctk.CTk):
                 continue
             
             try:
-                wb = load_workbook(excel_path)
+                wb = self.safe_load_workbook(excel_path)
                 
                 for removal in removals:
                     student_name = removal['student']
-                    old_horaire = removal['horaire']
                     old_classe = removal['classe']
-                    
-                    # Chercher la feuille correspondant à l'horaire
-                    target_sheet = None
+
+                    # Chercher dans toutes les feuilles pour la classe spécifiée
+                    found_in_sheet = False
                     for sheet_name in wb.sheetnames:
-                        sheet_normalized = self.clean_horaire_name(sheet_name).lower().strip()
-                        horaire_normalized = old_horaire.lower().strip()
-                        
-                        import re
-                        horaire_numbers = re.findall(r'\d+', horaire_normalized)
-                        sheet_numbers = re.findall(r'\d+', sheet_normalized)
-                        
-                        if (sheet_normalized == horaire_normalized or 
-                            horaire_normalized in sheet_normalized or 
-                            sheet_normalized in horaire_normalized or
-                            (horaire_numbers and sheet_numbers and horaire_numbers == sheet_numbers)):
-                            target_sheet = wb[sheet_name]
-                            break
-                    
-                    if not target_sheet:
-                        continue
-                    
-                    # Chercher la ligne de la classe
-                    classe_row = None
-                    for row_idx in range(2, target_sheet.max_row + 1):
-                        cell_value = str(target_sheet.cell(row=row_idx, column=1).value or '').strip()
-                        if cell_value == old_classe:
-                            classe_row = row_idx
-                            break
-                    
-                    if not classe_row:
-                        continue
-                    
-                    # Colonne 5 : Liste des élèves
-                    eleves_col = 5
-                    current_value = str(target_sheet.cell(row=classe_row, column=eleves_col).value or '').strip()
-                    
-                    if current_value and current_value.lower() not in ['', 'nan', 'none', 'liste des élèves...']:
-                        # Séparer les élèves
-                        eleves_list = [e.strip() for e in current_value.split(',') if e.strip()]
-                        
-                        # Retirer l'élève de la liste
-                        if student_name in eleves_list:
-                            eleves_list.remove(student_name)
-                            print(f"🗑️  Élève {student_name} retiré de l'ancienne classe {old_classe}")
-                        
-                        # Mettre à jour la cellule
-                        if eleves_list:
-                            new_value = ', '.join(sorted(eleves_list))
-                            target_sheet.cell(row=classe_row, column=eleves_col, value=new_value)
-                        else:
-                            # Si la liste est vide, mettre une valeur vide
-                            target_sheet.cell(row=classe_row, column=eleves_col, value='')
+                        sheet = wb[sheet_name]
+
+                        # Chercher la ligne correspondant à la classe (colonne 1 : "Nom de la classe")
+                        classe_row = None
+                        for row_idx in range(2, sheet.max_row + 1):  # Commencer à la ligne 2 (après header)
+                            cell_value = str(sheet.cell(row=row_idx, column=1).value or '').strip()
+                            if cell_value == old_classe:
+                                classe_row = row_idx
+                                break
+
+                        if classe_row:
+                            # Colonne des élèves (généralement colonne 5)
+                            eleves_col = 5
+                            current_value = str(sheet.cell(row=classe_row, column=eleves_col).value or '').strip()
+
+                            if current_value and current_value.lower() not in ['', 'nan', 'none', 'liste des élèves...']:
+                                # Séparer les élèves
+                                eleves_list = [e.strip() for e in current_value.split(',') if e.strip()]
+
+                                # Retirer l'élève
+                                if student_name in eleves_list:
+                                    eleves_list.remove(student_name)
+                                    found_in_sheet = True
+
+                                    # Mettre à jour la cellule des élèves
+                                    if eleves_list:
+                                        new_value = ', '.join(sorted(eleves_list))
+                                        sheet.cell(row=classe_row, column=eleves_col, value=new_value)
+                                    else:
+                                        # Si la classe devient vide, vider aussi la colonne niveau
+                                        sheet.cell(row=classe_row, column=eleves_col, value='')
+                                        sheet.cell(row=classe_row, column=4, value='')  # Colonne niveau
+
+                                    print(f"✅ Élève {student_name} retiré de {excel_filename} (feuille: {sheet_name}, classe: {old_classe})")
+
+                    if not found_in_sheet:
+                        print(f"ℹ️ Élève {student_name} non trouvé dans {excel_filename} pour la classe {old_classe}")
                 
                 # Sauvegarder le fichier
                 wb.save(excel_path)
@@ -3152,8 +3355,8 @@ class AppPedagogique(ctk.CTk):
 
             if self.cols_map["Cours 2"]:
                 new_row[self.cols_map["Cours 2"]] = "OUI" if is_ci else ""
-            if self.cols_map["Horaire"]:
-                new_row[self.cols_map["Horaire"]] = horaire
+            # if self.cols_map["Horaire"]:  # Désactivé
+            #     new_row[self.cols_map["Horaire"]] = horaire
             if self.cols_map["Classe"]:
                 new_row[self.cols_map["Classe"]] = classe
 
@@ -3299,10 +3502,15 @@ class AppPedagogique(ctk.CTk):
                         'nom': str(row[self.cols_map["Stagiaire"]]),
                         'age': row[self.cols_map["Âge"]],
                         'niveau': str(row[self.cols_map["Niveau"]]) if pd.notna(row[self.cols_map["Niveau"]]) else "",
-                        'ecole': str(row[self.cols_map["Ecole"]]) if self.cols_map["Ecole"] and pd.notna(row[self.cols_map["Ecole"]]) else "",
-                        'horaire': str(row[self.cols_map["Horaire"]]) if self.cols_map["Horaire"] and pd.notna(row[self.cols_map["Horaire"]]) else "",
                         'classe': str(row[self.cols_map["Classe"]]) if self.cols_map["Classe"] and pd.notna(row[self.cols_map["Classe"]]) else "",
-                        'ci': "OUI" if any(x in str(row[self.cols_map["Cours 2"]]).lower() for x in ["intensif", "ci", "oui"]) else "NON"
+                        'prof': str(row[self.cols_map["Prof"]]) if self.cols_map["Prof"] and pd.notna(row[self.cols_map["Prof"]]) else "",
+                        'arrivee': self.format_date_jour_mois(row[self.cols_map["Arrivée"]]) if self.cols_map["Arrivée"] and pd.notna(row[self.cols_map["Arrivée"]]) else "",
+                        'depart': self.format_date_jour_mois(row[self.cols_map["Départ"]]) if self.cols_map["Départ"] and pd.notna(row[self.cols_map["Départ"]]) else "",
+                        'ci': "OUI" if self.cols_map["Départ CI"] and pd.notna(row[self.cols_map["Départ CI"]]) and str(row[self.cols_map["Départ CI"]]).strip() != "" else "",
+                        'classe_ci': str(row[self.cols_map["Classe CI"]]) if self.cols_map["Classe CI"] and pd.notna(row[self.cols_map["Classe CI"]]) else "",
+                        'prof_ci': str(row[self.cols_map["Prof CI"]]) if self.cols_map["Prof CI"] and pd.notna(row[self.cols_map["Prof CI"]]) else "",
+                        'arr_ci': self.format_date_jour_mois(row[self.cols_map["Départ CI"]]) if self.cols_map["Départ CI"] and pd.notna(row[self.cols_map["Départ CI"]]) else "",
+                        'dep_ci': self.format_date_jour_mois(row[self.cols_map["Arrivée CI"]]) if self.cols_map["Arrivée CI"] and pd.notna(row[self.cols_map["Arrivée CI"]]) else ""
                     }
                     current_students.append(student_data)
                     count += 1
@@ -3394,27 +3602,49 @@ class AppPedagogique(ctk.CTk):
                 )
                 school_label.pack(side="left")
 
-                # Ligne 2: Horaire et Classe
-                horaire_classe_frame = ctk.CTkFrame(info_frame, fg_color="transparent")
-                horaire_classe_frame.pack(fill="x", pady=(0, 3))
-
-                horaire_text = f"⏰ Horaire: {student['horaire']}" if student['horaire'] else "⏰ Horaire: Non défini"
-                horaire_label = ctk.CTkLabel(
-                    horaire_classe_frame,
-                    text=horaire_text,
-                    font=("Inter", 11),
-                    text_color="#374151"
-                )
-                horaire_label.pack(side="left", padx=(0, 15))
+                # Ligne 2: Classe et Prof
+                classe_prof_frame = ctk.CTkFrame(info_frame, fg_color="transparent")
+                classe_prof_frame.pack(fill="x", pady=(0, 3))
 
                 classe_text = f"📝 Classe: {student['classe']}" if student['classe'] else "📝 Classe: Non définie"
                 classe_label = ctk.CTkLabel(
-                    horaire_classe_frame,
+                    classe_prof_frame,
                     text=classe_text,
                     font=("Inter", 11),
                     text_color="#374151"
                 )
-                classe_label.pack(side="left")
+                classe_label.pack(side="left", padx=(0, 15))
+
+                prof_text = f"👨‍🏫 Prof: {student['prof']}" if student['prof'] else "👨‍🏫 Prof: Non défini"
+                prof_label = ctk.CTkLabel(
+                    classe_prof_frame,
+                    text=prof_text,
+                    font=("Inter", 11),
+                    text_color="#374151"
+                )
+                prof_label.pack(side="left")
+
+                # Ligne 3: Classe CI et Prof CI
+                classe_ci_prof_ci_frame = ctk.CTkFrame(info_frame, fg_color="transparent")
+                classe_ci_prof_ci_frame.pack(fill="x", pady=(0, 3))
+
+                arr_ci_text = f"📅 Arr. CI: {student['arr_ci']}" if student.get('arr_ci') else "📅 Arr. CI: Non définie"
+                arr_ci_label = ctk.CTkLabel(
+                    classe_ci_prof_ci_frame,
+                    text=arr_ci_text,
+                    font=("Inter", 11),
+                    text_color="#374151"
+                )
+                arr_ci_label.pack(side="left", padx=(0, 15))
+
+                dep_ci_text = f"📅 Dép. CI: {student.get('dep_ci')}" if student.get('dep_ci') else "📅 Dép. CI: Non définie"
+                dep_ci_label = ctk.CTkLabel(
+                    classe_ci_prof_ci_frame,
+                    text=dep_ci_text,
+                    font=("Inter", 11),
+                    text_color="#374151"
+                )
+                dep_ci_label.pack(side="left")
 
                 # Ligne 3: CI
                 ci_frame = ctk.CTkFrame(info_frame, fg_color="transparent")
@@ -3594,16 +3824,16 @@ class AppPedagogique(ctk.CTk):
             return None
 
         ecole = student_row[self.cols_map["Ecole"]].values[0] if self.cols_map["Ecole"] and pd.notna(student_row[self.cols_map["Ecole"]].values[0]) else None
-        horaire = student_row[self.cols_map["Horaire"]].values[0] if self.cols_map["Horaire"] and pd.notna(student_row[self.cols_map["Horaire"]].values[0]) else None
+        # horaire = student_row[self.cols_map["Horaire"]].values[0] if self.cols_map["Horaire"] and pd.notna(student_row[self.cols_map["Horaire"]].values[0]) else None  # Désactivé
         classe = student_row[self.cols_map["Classe"]].values[0] if self.cols_map["Classe"] and pd.notna(student_row[self.cols_map["Classe"]].values[0]) else None
 
-        if not ecole or not horaire or not classe:
+        if not ecole or not classe:  # horaire plus requis
             return None
 
         return {
             'nom': student_name,
             'ecole': ecole,
-            'horaire': horaire,
+            # 'horaire': horaire,  # Désactivé
             'classe': classe
         }
 
@@ -3614,8 +3844,12 @@ class AppPedagogique(ctk.CTk):
 
         student_name = student_info['nom']
         ecole = student_info['ecole']
-        horaire = student_info['horaire']
+        # horaire = student_info['horaire']  # Désactivé - colonne supprimée
         classe = student_info['classe']
+
+        # Désactiver la suppression des fichiers Excel car l'horaire n'est plus disponible
+        print(f"⚠️ Suppression des fichiers Excel désactivée pour {student_name} (horaire non disponible)")
+        return
 
         # Mapping des écoles
         school_file_mapping = {

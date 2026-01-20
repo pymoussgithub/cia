@@ -413,7 +413,7 @@ def get_students_info_from_matrix(matrix_path, student_names):
         age_col = None
         ci_col = None
 
-        print(f"[DEBUG MATRIX] Colonnes disponibles: {list(df.columns)}")
+        
 
         for col in df.columns:
             col_lower = str(col).lower()
@@ -429,7 +429,7 @@ def get_students_info_from_matrix(matrix_path, student_names):
             elif 'ci' in col_lower or 'cours intensif' in col_lower or 'intensif' in col_lower or col_lower == 'cours 2':
                 if not ci_col:
                     ci_col = col
-                    print(f"[DEBUG MATRIX] Colonne CI trouvée: {col}")
+                    
 
         if not stagiaire_col:
             return {name: {'niveau': '', 'age': 'N/A', 'ci': False} for name in student_names}
@@ -458,8 +458,7 @@ def get_students_info_from_matrix(matrix_path, student_names):
                 if ci_col:
                     ci_val = str(row.get(ci_col, '')).strip().lower()
                     ci = any(keyword in ci_val for keyword in ['oui', 'yes', 'true', '1', 'ci', 'intensif', 'cours intensif'])
-                    print(f"[DEBUG MATRIX] Élève {original_name}: colonne='{ci_col}', valeur='{str(row.get(ci_col, ''))}', normalisée='{ci_val}', CI={ci}")
-
+                    
                 students_info[original_name] = {
                     'niveau': niveau,
                     'age': age,
@@ -1093,7 +1092,8 @@ def clean_horaire_name(sheet_name):
     # Liste complète des mots à supprimer (avec variations)
     words_to_remove = [
         "animateur", "Animateur", "anim", "Anim",
-        "professeur", "Professeur", "prof", "Prof"
+        "professeur", "Professeur", "prof", "Prof",
+        "Rôle", "rôle", "role", "Role"
     ]
 
     # Nettoyer le nom en supprimant tous les mots-clés d'intervenants
@@ -1311,7 +1311,7 @@ def open_main_window(username: str, screen_width: int, screen_height: int) -> No
         menu.geometry(f"{menu_width}x{menu_height}+{pos_x}+{pos_y}")
 
         # --- Contenu du menu ---
-        actions = ["Importer fichier matrix", "Ouvrir fichier matrix", "Assigner les niveaux\net les classes", "Professeurs", "Animateurs", "Récapitulatif", "Listes"]
+        actions = ["Importer fichier matrix", "Ouvrir fichier matrix", "Elèves", "Professeurs", "Animateurs", "Récapitulatif", "Listes"]
         for action in actions:
             btn = ctk.CTkButton(
                 menu, text=action, fg_color="#89B8E3", hover_color="#A1C9F1",
@@ -1335,7 +1335,7 @@ def open_main_window(username: str, screen_width: int, screen_height: int) -> No
 
     def _augment_matrix_file(matrix_path: str) -> bool:
         """
-        Ajoute, dans le fichier matrix, quatre colonnes 'Niveau', 'Ecole', 'Horaire', 'Classe'
+        Ajoute, dans le fichier matrix, quatre colonnes 'Niveau', 'Ecole', 'Classe', 'Classe CI'
         immédiatement à droite de la colonne 'stagiaire' (recherchée dans la première ligne).
         """
         if load_workbook is None:
@@ -1369,12 +1369,15 @@ def open_main_window(username: str, screen_width: int, screen_height: int) -> No
 
             # Insère 4 colonnes juste à droite de la colonne stagiaire
             insert_at = stagiaire_col_index + 1
-            ws.insert_cols(insert_at, amount=4)
+            ws.insert_cols(insert_at, amount=6)
 
             ws.cell(row=header_row, column=insert_at, value="Niveau")
             ws.cell(row=header_row, column=insert_at + 1, value="Ecole")
-            ws.cell(row=header_row, column=insert_at + 2, value="Horaire")
-            ws.cell(row=header_row, column=insert_at + 3, value="Classe")
+            ws.cell(row=header_row, column=insert_at + 2, value="Classe")
+            ws.cell(row=header_row, column=insert_at + 3, value="Prof")
+            ws.cell(row=header_row, column=insert_at + 4, value="Classe CI")
+            ws.cell(row=header_row, column=insert_at + 5, value="Prof CI")
+            
 
             wb.save(matrix_path)
             return True
@@ -1770,6 +1773,23 @@ def open_main_window(username: str, screen_width: int, screen_height: int) -> No
             if not file_path:
                 return
 
+            # Boîte de dialogue de confirmation avant l'importation
+            confirmation = messagebox.askyesno(
+                "Confirmation d'importation",
+                "ATTENTION : Importer un nouveau fichier matrix va :\n\n"
+                "• Supprimer et remplacer le fichier matrix existant\n"
+                "• Remettre à zéro toutes les classes existantes\n"
+                "• Remettre à zéro les niveaux des élèves\n"
+                "• Remettre à zéro les assignations des intervenants\n\n"
+                "Cette action est irréversible.\n\n"
+                "Voulez-vous vraiment continuer ?",
+                parent=app,
+                icon='warning'
+            )
+
+            if not confirmation:
+                return
+
             # Afficher la fenêtre de chargement
             loading_popup = show_loading_window_for_matrix_import(app)
 
@@ -1996,6 +2016,66 @@ def open_main_window(username: str, screen_width: int, screen_height: int) -> No
             PersonnelManager(app, week_folder, personnel_type="animateurs", data_changed_callback=refresh_dashboard_callback)
             return
 
+        # Gestion des élèves (assignation aux classes)
+        if action.startswith("Elèves"):
+            # Obtenir le dossier de la semaine sélectionnée
+            week_label = selected_week.get()
+            if not week_label:
+                messagebox.showwarning(
+                    "Aucune semaine sélectionnée",
+                    "Veuillez d'abord sélectionner une semaine.",
+                    parent=app
+                )
+                return
+
+            week_num = week_label.split()[-1]
+            week_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"semaine_{week_num}")
+
+            # Vérifier que le fichier matrix.xlsx existe
+            matrix_path = os.path.join(week_folder, "matrix.xlsx")
+            if not os.path.exists(matrix_path):
+                messagebox.showwarning(
+                    "Matrix introuvable",
+                    "Aucun fichier 'matrix.xlsx' n'a été trouvé pour cette semaine.\n"
+                    "Vous devez d'abord l'importer via 'Importer fichier matrix'.",
+                    parent=app
+                )
+                return
+
+            # Lancer l'outil d'assignation des niveaux aux élèves (qui permet aussi de gérer les assignations)
+            script_path = os.path.join(os.path.dirname(__file__), "Assignation des Niveaux.py")
+            if not os.path.exists(script_path):
+                messagebox.showerror(
+                    "Script introuvable",
+                    f"Le script 'Assignation des Niveaux.py' est introuvable.\n"
+                    f"Chemin attendu : {script_path}",
+                    parent=app
+                )
+                return
+
+            # Afficher la fenêtre de chargement
+            show_loading_window(app)
+
+            try:
+                # Lancer le script avec le chemin du fichier matrix en argument
+                import subprocess
+                import sys
+                subprocess.Popen([sys.executable, script_path, matrix_path])
+
+                # Fermer la fenêtre de chargement après un délai
+                app.after(1500, lambda: None)
+
+            except Exception as e:
+                # Réinitialiser immédiatement en cas d'erreur
+                app.configure(cursor="")
+                app.update_idletasks()
+                messagebox.showerror(
+                    "Erreur de lancement",
+                    f"Impossible de lancer l'outil de gestion des élèves.\n\nDétail : {e}",
+                    parent=app
+                )
+            return
+
         # Afficher le récapitulatif des statistiques
         if action == "Récapitulatif":
             show_summary_window()
@@ -2028,6 +2108,81 @@ def open_main_window(username: str, screen_width: int, screen_height: int) -> No
             # Calculer pour avoir des lignes équilibrées
             rows = (total_items + max_per_row - 1) // max_per_row
             return min((total_items + rows - 1) // rows, max_per_row)
+
+    def get_animateur_from_excel(week_folder, school_name, horaire, classe_nom):
+        """Récupère l'animateur actuel assigné à une classe depuis le fichier Excel de l'école."""
+        if not load_workbook or not week_folder:
+            return "Non spécifié"
+
+        # Mapping des écoles vers les fichiers Excel
+        school_file_mapping = {
+            'A': 'ecole_a.xlsx',
+            'B': 'ecole_b.xlsx',
+            'C/CS': 'ECOLE_C_cours_standard.xlsx',
+            'C/CI': 'ECOLE_C_cours_intensif.xlsx',
+            'Morning': 'MORNING.xlsx',
+            'Premium/CS': 'ECOLE_PREMIUM_cours_standard.xlsx',
+            'Premium/CI': 'ECOLE_PREMIUM_cours_intensifs.xlsx'
+        }
+
+        if school_name not in school_file_mapping:
+            return "Non spécifié"
+
+        excel_filename = school_file_mapping[school_name]
+        excel_path = os.path.join(week_folder, excel_filename)
+
+        if not os.path.exists(excel_path):
+            return "Non spécifié"
+
+        try:
+            wb = load_workbook(excel_path)
+
+            # Chercher la feuille correspondant à l'horaire
+            target_sheet = None
+            for sheet_name in wb.sheetnames:
+                sheet_normalized = clean_horaire_name(sheet_name).lower().strip()
+                horaire_normalized = horaire.lower().strip()
+                if sheet_normalized == horaire_normalized or horaire_normalized in sheet_normalized:
+                    target_sheet = wb[sheet_name]
+                    break
+
+            if not target_sheet:
+                return "Non spécifié"
+
+            # Chercher la ligne de la classe
+            classe_row = None
+            for row_idx in range(2, target_sheet.max_row + 1):
+                if str(target_sheet.cell(row=row_idx, column=1).value or '').strip() == classe_nom:
+                    classe_row = row_idx
+                    break
+
+            if not classe_row:
+                return "Non spécifié"
+
+            # Chercher la colonne animateur
+            animateur_col = None
+            for col_idx in range(1, target_sheet.max_column + 1):
+                header_value = str(target_sheet.cell(row=1, column=col_idx).value or '').lower()
+                # Chercher spécifiquement "animateur", "anim", "Animateur" ou "Rôle" mais pas "intervenant" ou "prof"
+                if (('animateur' in header_value or 'anim' in header_value or 'Animateur' in header_value or 'rôle' in header_value or 'role' in header_value) and
+                    'intervenant' not in header_value and 'prof' not in header_value):
+                    animateur_col = col_idx
+                    break
+
+            # Si pas trouvé, utiliser la colonne 4 par défaut
+            if animateur_col is None:
+                animateur_col = 4
+
+            # Récupérer l'animateur de la classe
+            animateur_value = str(target_sheet.cell(row=classe_row, column=animateur_col).value or '').strip()
+            if animateur_value and animateur_value not in ['', 'nan', 'none', 'Non spécifié']:
+                return animateur_value
+            else:
+                return "Non spécifié"
+
+        except Exception as e:
+            print(f"Erreur lors de la récupération de l'animateur de la classe {classe_nom}: {e}")
+            return "Non spécifié"
 
     def create_classes_dashboard(parent_frame, school_data, week_folder):
         """
@@ -2308,7 +2463,7 @@ def open_main_window(username: str, screen_width: int, screen_height: int) -> No
                     icon_label.grid(row=0, column=0, padx=(5, 8), pady=5)
 
                     # Informations de l'horaire
-                    horaire_text = f"Horaire : {horaire} : {type_intervenant.title()}"
+                    horaire_text = f"Horaire : {horaire}"
                     horaire_label = ctk.CTkLabel(
                         horaire_header,
                         text=horaire_text,
@@ -2433,9 +2588,18 @@ def open_main_window(username: str, screen_width: int, screen_height: int) -> No
 
                             # Niveau et intervenant
                             if niveau:
+                                # Pour les écoles A et B, afficher prof et animateur
+                                if display_name in ["A", "B"]:
+                                    # Récupérer l'animateur depuis Excel
+                                    animateur = get_animateur_from_excel(week_folder, display_name, horaire, classe_nom)
+                                    intervenant_text = f"👨‍🏫 {intervenant_classe} / 🎭 {animateur}"
+                                else:
+                                    # Pour les autres écoles, afficher seulement l'intervenant normal
+                                    intervenant_text = f"👨‍🏫 {intervenant_classe}"
+
                                 niveau_classe_label = ctk.CTkLabel(
                                     classe_card,
-                                    text=f"📚 {niveau}\n👨‍🏫 {intervenant_classe}",
+                                    text=f"📚 {niveau}\n{intervenant_text}",
                                     font=("Arial", 9),
                                     text_color="#6b7280"
                                 )
